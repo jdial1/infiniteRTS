@@ -6,6 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
 
 import { GameState, ResourceNode, Building, Player, MapZone, Unit } from './src/types'; // Types
+import { constants, buildings, upgrades } from './data';
 
 // Initialize game state
 const gameState: GameState = {
@@ -20,7 +21,7 @@ function randomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-const CHUNK_SIZE = 1000;
+const CHUNK_SIZE = constants.CHUNK_SIZE;
 const generatedChunks = new Set<string>();
 const chunkData = new Map<string, { resources: ResourceNode[], zones: MapZone[] }>();
 const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
@@ -94,6 +95,11 @@ async function startServer() {
     console.log(`Player connected: ${socket.id}`);
 
     // Create player
+    const initialUpgrades: Record<string, number> = {};
+    upgrades.forEach(u => {
+      initialUpgrades[u.id] = 0;
+    });
+
     gameState.players[socket.id] = {
       id: socket.id,
       name: `Player ${socket.id.substring(0, 4)}`,
@@ -103,16 +109,7 @@ async function startServer() {
       inventory: { wood: 300, stone: 200, gold: 100 }, // starting resources
       score: 0,
       traits: [],
-      upgrades: {
-        miner_speed: 0,
-        miner_capacity: 0,
-        base_tax: 0,
-        base_construction: 0,
-        wall_solar: 0,
-        wall_magnetic: 0,
-        turret_collector: 0,
-        turret_beam: 0
-      }
+      upgrades: initialUpgrades
     };
 
     // Send initial state to the new player (without full resources/zones to save bandwidth/client memory)
@@ -184,23 +181,19 @@ async function startServer() {
         const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === socket.id && b.type === 'base');
         if (hasBase) return;
       } else {
-        // Must have a base and be within range (450 units) of it
+        // Must have a base and be within range (BUILD_RANGE units) of it
         const playerBase = Object.values(gameState.buildings).find(b => b.ownerId === socket.id && b.type === 'base');
         if (!playerBase) return;
 
         const dx = data.x - playerBase.x;
         const dy = data.y - playerBase.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > 450) return;
+        if (dist > constants.BUILD_RANGE) return;
       }
 
-      const baseCosts = {
-        base: { wood: 100, stone: 100, gold: 50 },
-        wall: { wood: 0, stone: 10, gold: 0 },
-        turret: { wood: 50, stone: 50, gold: 20 }
-      };
-
-      const cost = baseCosts[data.type];
+      const buildingData = (buildings as any)[data.type];
+      if (!buildingData) return;
+      const cost = buildingData.cost;
       if (!cost) return;
 
       const hasCostTrait = player.traits.includes('cost');
@@ -234,7 +227,7 @@ async function startServer() {
           x: data.x,
           y: data.y,
           ownerId: socket.id,
-          health: Math.floor(100 * healthModifier)
+          health: Math.floor(buildingData.health * healthModifier)
         };
         gameState.buildings[bId] = b;
         io.emit('building_created', b);
@@ -247,7 +240,8 @@ async function startServer() {
       if (!player) return;
 
       if (data.type === 'miner') {
-        const baseCost = { wood: 50, stone: 20, gold: 0 };
+        const buildingData = (buildings as any).miner;
+        const baseCost = buildingData.cost;
         const hasCostTrait = player.traits.includes('cost');
         const costModifier = hasCostTrait ? 0.75 : 1.0;
         
@@ -282,7 +276,7 @@ async function startServer() {
             y: base.y,
             state: 'idle',
             inventory: { type: null, amount: 0 },
-            capacity: 20 + (minerCapacityLvl * 10),
+            capacity: buildingData.baseCapacity + (minerCapacityLvl * 10),
             assignedResource: null
           };
           gameState.units[uId] = u;
@@ -296,23 +290,18 @@ async function startServer() {
       const player = gameState.players[socket.id];
       if (!player) return;
 
+      const upgradeMetadata = upgrades.find(u => u.id === data.upgradeId);
+      if (!upgradeMetadata) return;
+
       if (!player.upgrades) {
-        player.upgrades = {
-          miner_speed: 0,
-          miner_capacity: 0,
-          base_tax: 0,
-          base_construction: 0,
-          wall_solar: 0,
-          wall_magnetic: 0,
-          turret_collector: 0,
-          turret_beam: 0
-        };
+        player.upgrades = {};
+        upgrades.forEach(u => { player.upgrades[u.id] = 0; });
       }
 
       const currentLvl = player.upgrades[data.upgradeId] || 0;
       
       // Cost factor scales with 1.5x of the last cost
-      const baseCost = { wood: 100, stone: 80, gold: 40 };
+      const baseCost = upgradeMetadata.baseCost;
       const costFactor = Math.pow(1.5, currentLvl);
       const finalCost = {
         wood: Math.round(baseCost.wood * costFactor),
@@ -332,7 +321,7 @@ async function startServer() {
 
         // Apply capacity upgrades to existing miners immediately
         if (data.upgradeId === 'miner_capacity') {
-          const newCapacity = 20 + ((currentLvl + 1) * 10);
+          const newCapacity = (buildings as any).miner.baseCapacity + ((currentLvl + 1) * 10);
           Object.values(gameState.units).forEach(u => {
             if (u.ownerId === player.id && u.type === 'miner') {
               u.capacity = newCapacity;
@@ -375,7 +364,7 @@ async function startServer() {
          const dx = player.x - resource.x;
          const dy = player.y - resource.y;
          const dist = Math.sqrt(dx*dx + dy*dy);
-         if (dist < 100) { // range check
+         if (dist < constants.MANUAL_GATHER_RANGE) { // range check
            // Apply +50% bonus if matching zone type
            let bonus = 1.0;
            for (const zId in gameState.zones) {
@@ -416,14 +405,14 @@ async function startServer() {
   });
 
   // Game Tick Loop (Server authority)
-  const TICK_RATE = 10; // 10 ticks per second
+  const TICK_RATE = constants.TICK_RATE; // 10 ticks per second
   let ticksCount = 0;
   setInterval(() => {
     const dt = 1 / TICK_RATE;
     ticksCount++;
     
     // Process passive upgrade resource generation in intervals
-    if (ticksCount % 20 === 0) { // Every 2 seconds
+    if (ticksCount % constants.PASSIVE_INCOME_INTERVAL_TICKS === 0) { // Every 2 seconds
       Object.values(gameState.players).forEach(p => {
         let updated = false;
         
@@ -456,7 +445,7 @@ async function startServer() {
       });
     }
 
-    if (ticksCount % 50 === 0) { // Every 5 seconds
+    if (ticksCount % constants.TURRET_COLLECTOR_INTERVAL_TICKS === 0) { // Every 5 seconds
       Object.values(gameState.players).forEach(p => {
         let updated = false;
         
@@ -481,11 +470,11 @@ async function startServer() {
     let combatEvents: { from: {x:number, y:number, id:string}, to: {x:number, y:number, id:string}, damage: number }[] = [];
 
     // Turret attacking
-    if (ticksCount % 10 === 0) { // Every 1 second
+    if (ticksCount % constants.TURRET_ATTACK_INTERVAL_TICKS === 0) { // Every 1 second
       Object.values(gameState.buildings).forEach(b => {
         if (b.type === 'turret') {
           // Find closest enemy building
-          let closestDist = 250;
+          let closestDist = constants.TURRET_RANGE;
           let target = null;
           for (let eId in gameState.buildings) {
             const eb = gameState.buildings[eId];
@@ -535,7 +524,7 @@ async function startServer() {
          
          const hasSpeedTrait = p.traits.includes('speed');
          const minerSpeedLvl = p.upgrades?.miner_speed || 0;
-         const MINER_SPEED = (hasSpeedTrait ? 150 : 100) + (minerSpeedLvl * 25);
+         const MINER_SPEED = (hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 25);
          
          if (u.state === 'idle') {
             if (!u.assignedResource) return;

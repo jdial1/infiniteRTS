@@ -1,24 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { GameState, Player, ResourceNode, Building, MapZone } from './types';
-import * as BaseIcons from 'react-icons/gi';
-import { HelpCircle, X, User, Users, UserPlus, Zap, Sparkles, ChevronUp, ChevronsUp, ArrowUpRight, Gauge, Backpack, Coins, Shield, Sun, Flame, Box, Settings } from 'lucide-react';
+import * as GiIcons from 'react-icons/gi';
+import * as LucideIcons from 'lucide-react';
 
 import { renderToString } from 'react-dom/server';
 
-// Bypass typing issues for react-icons
-const Icons = BaseIcons as any;
-const GiWoodPile = Icons.GiWoodPile;
-const GiStoneBlock = Icons.GiStoneBlock;
-const GiGoldBar = Icons.GiGoldBar;
-const GiVillage = Icons.GiVillage;
-const GiMining = Icons.GiMining;
-const GiBrickWall = Icons.GiBrickWall;
-const GiStoneTower = Icons.GiStoneTower;
-const GiCrosshair = Icons.GiCrosshair;
-const GiTreasureMap = Icons.GiTreasureMap;
-const GiShield = Icons.GiShield;
-const GiHammerNails = Icons.GiHammerNails;
+import { constants, buildings, upgrades, icons } from '../data';
+
+// Helper to get icon component by name and library
+const getIconComponent = (name: string, library: string) => {
+  if (library === 'gi') return (GiIcons as any)[name];
+  if (library === 'lucide') return (LucideIcons as any)[name];
+  return null;
+};
+
+const DynamicIcon = ({ name, library, ...props }: { name: string; library: string; [key: string]: any }) => {
+  const Icon = getIconComponent(name, library);
+  return Icon ? <Icon {...props} /> : null;
+};
 
 function createIconImage(Icon: any, color: string): HTMLImageElement {
   const svgString = renderToString(<Icon color={color} size={32} />);
@@ -30,14 +30,14 @@ function createIconImage(Icon: any, color: string): HTMLImageElement {
   return img;
 }
 
-const woodIconImg = createIconImage(GiWoodPile, '#b45309');
-const stoneIconImg = createIconImage(GiStoneBlock, '#9ca3af');
-const goldIconImg = createIconImage(GiGoldBar, '#eab308');
+const woodIconImg = createIconImage(getIconComponent(icons.resources.wood.name, icons.resources.wood.library), icons.resources.wood.color);
+const stoneIconImg = createIconImage(getIconComponent(icons.resources.stone.name, icons.resources.stone.library), icons.resources.stone.color);
+const goldIconImg = createIconImage(getIconComponent(icons.resources.gold.name, icons.resources.gold.library), icons.resources.gold.color);
 
-const baseIconWhite = createIconImage(GiVillage, '#ffffff');
-const wallIconWhite = createIconImage(GiBrickWall, '#ffffff');
-const turretIconWhite = createIconImage(GiStoneTower, '#ffffff');
-const minerIconWhite = createIconImage(GiMining, '#ffffff');
+const baseIconWhite = createIconImage(getIconComponent(icons.buildings.base.name, icons.buildings.base.library), icons.buildings.base.color);
+const wallIconWhite = createIconImage(getIconComponent(icons.buildings.wall.name, icons.buildings.wall.library), icons.buildings.wall.color);
+const turretIconWhite = createIconImage(getIconComponent(icons.buildings.turret.name, icons.buildings.turret.library), icons.buildings.turret.color);
+const minerIconWhite = createIconImage(getIconComponent(icons.buildings.miner.name, icons.buildings.miner.library), icons.buildings.miner.color);
 
 let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
 function getRedHatchCanvas(): HTMLCanvasElement {
@@ -716,7 +716,7 @@ export default function App() {
             speedMultiplier += wallMagneticLvl * 0.25;
           }
         }
-        const speed = (hasSpeedTrait ? 300 : 200) * speedMultiplier * dt;
+        const speed = (hasSpeedTrait ? constants.HERO_SPEED_BOOST : constants.HERO_SPEED) * speedMultiplier * dt;
         let moved = false;
 
 
@@ -771,7 +771,7 @@ export default function App() {
         // --- CHUNK LOGIC ---
         if (time - lastChunkUpdate.current > 500) { // every 0.5s
           lastChunkUpdate.current = time;
-          const CHUNK_SIZE = 1000;
+          const CHUNK_SIZE = constants.CHUNK_SIZE;
           
           const activeChunks = new Set<string>();
           
@@ -861,7 +861,7 @@ export default function App() {
         if (mapSettings.showGrid) {
           ctx.strokeStyle = 'rgba(42, 60, 80, 0.5)';
           ctx.lineWidth = 1;
-          const GRID_SIZE = 200;
+          const GRID_SIZE = constants.GRID_SIZE;
           const viewDist = 1500 / camera.current.zoom;
           const startX = Math.floor((camera.current.x - viewDist) / GRID_SIZE) * GRID_SIZE;
           const endX = Math.ceil((camera.current.x + viewDist) / GRID_SIZE) * GRID_SIZE;
@@ -1019,8 +1019,9 @@ export default function App() {
         // Draw Buildings
         for (const bId in store.state.buildings) {
           const b = store.state.buildings[bId];
+          const bData = (buildings as any)[b.type];
           const playerColor = store.state.players[b.ownerId]?.color || '#ffffff';
-          const size = b.type === 'base' ? 20 : (b.type === 'wall' ? 10 : 15);
+          const size = bData.size;
           
           if (b.type === 'turret' && mapSettings.showTowerBorder) {
             ctx.save();
@@ -1029,7 +1030,7 @@ export default function App() {
             ctx.lineWidth = 1;
             ctx.globalAlpha = 0.35;
             ctx.beginPath();
-            ctx.arc(b.x, b.y, 250, 0, Math.PI * 2);
+            ctx.arc(b.x, b.y, constants.TURRET_RANGE, 0, Math.PI * 2);
             ctx.stroke();
 
             const pattern = ctx.createPattern(getRedHatchCanvas(), 'repeat');
@@ -1074,7 +1075,7 @@ export default function App() {
           
           if (u.type === 'miner') {
             const playerColor = store.state.players[u.ownerId]?.color || '#ffffff';
-            const size = 11;
+            const size = (buildings as any).miner.size;
             
             ctx.save();
             ctx.fillStyle = playerColor;
@@ -1227,7 +1228,7 @@ export default function App() {
         if (buildMode && store.me) {
           ctx.globalAlpha = 0.5;
           const playerColor = store.me.color;
-          const size = buildMode === 'base' ? 20 : (buildMode === 'wall' ? 10 : 15);
+          const size = (buildings as any)[buildMode].size;
           
           // Find player's base to show its building range
           const myBase = Object.values(store.state?.buildings || {}).find(b => b.ownerId === store.me?.id && b.type === 'base');
@@ -1240,7 +1241,7 @@ export default function App() {
             ctx.lineWidth = 1.5;
             ctx.globalAlpha = 0.45;
             ctx.beginPath();
-            ctx.arc(myBase.x, myBase.y, 450, 0, Math.PI * 2); // Build range is 450 units
+            ctx.arc(myBase.x, myBase.y, constants.BUILD_RANGE, 0, Math.PI * 2); // Build range is 450 units
             ctx.stroke();
 
             ctx.fillStyle = store.me.color;
@@ -1252,7 +1253,7 @@ export default function App() {
             ctx.globalAlpha = 0.7;
             ctx.font = 'bold 9px monospace';
             ctx.textAlign = 'center';
-            ctx.fillText('BASE BUILD RANGE (450m)', myBase.x, myBase.y - 455);
+            ctx.fillText(`BASE BUILD RANGE (${constants.BUILD_RANGE}m)`, myBase.x, myBase.y - (constants.BUILD_RANGE + 5));
             ctx.restore();
           } else if (buildMode === 'base' && mapSettings.showBuildAreaBorder) {
             // If they are placing their first base, show the future base range as preview around construction mouse pointer
@@ -1262,7 +1263,7 @@ export default function App() {
             ctx.lineWidth = 1.5;
             ctx.globalAlpha = 0.35;
             ctx.beginPath();
-            ctx.arc(mouse.current.x, mouse.current.y, 450, 0, Math.PI * 2);
+            ctx.arc(mouse.current.x, mouse.current.y, constants.BUILD_RANGE, 0, Math.PI * 2);
             ctx.stroke();
 
             ctx.fillStyle = store.me.color;
@@ -1273,7 +1274,7 @@ export default function App() {
             ctx.globalAlpha = 0.6;
             ctx.font = 'bold 9px monospace';
             ctx.textAlign = 'center';
-            ctx.fillText('FUTURE BASE RANGE PREVIEW', mouse.current.x, mouse.current.y - 455);
+            ctx.fillText('FUTURE BASE RANGE PREVIEW', mouse.current.x, mouse.current.y - (constants.BUILD_RANGE + 5));
             ctx.restore();
           }
 
@@ -1285,7 +1286,7 @@ export default function App() {
             ctx.lineWidth = 1;
             ctx.globalAlpha = 0.5;
             ctx.beginPath();
-            ctx.arc(mouse.current.x, mouse.current.y, 250, 0, Math.PI * 2);
+            ctx.arc(mouse.current.x, mouse.current.y, constants.TURRET_RANGE, 0, Math.PI * 2);
             ctx.stroke();
 
             const pattern = ctx.createPattern(getRedHatchCanvas(), 'repeat');
@@ -1308,7 +1309,7 @@ export default function App() {
               const dx = mouse.current.x - myBase.x;
               const dy = mouse.current.y - myBase.y;
               const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist > 450) {
+              if (dist > constants.BUILD_RANGE) {
                 canPlace = false;
                 warningText = 'OUT OF RANGE';
               }
@@ -1426,20 +1427,20 @@ export default function App() {
             fctx.fill();
           };
           
-          if (store.me) drawVision(store.me.x, store.me.y, 600);
+          if (store.me) drawVision(store.me.x, store.me.y, constants.FOG_VISION_HERO);
           
           Object.values(store.state.buildings).forEach(b => {
              if (b.ownerId === store.me?.id) {
                 let r = 200;
-                if (b.type === 'base') r = 800;
-                if (b.type === 'turret') r = 600;
+                if (b.type === 'base') r = constants.FOG_VISION_BASE;
+                if (b.type === 'turret') r = constants.FOG_VISION_TURRET;
                 drawVision(b.x, b.y, r);
              }
           });
           
           Object.values(store.state.units).forEach(u => {
              if (u.ownerId === store.me?.id) {
-                drawVision(u.x, u.y, 400);
+                drawVision(u.x, u.y, constants.FOG_VISION_MINER);
              }
           });
           
@@ -1520,25 +1521,24 @@ export default function App() {
           // 3. Draw Buildings
           for (const bId in store.state.buildings) {
             const b = store.state.buildings[bId];
+            const bData = (buildings as any)[b.type];
             const playerColor = store.state.players[b.ownerId]?.color || '#ffffff';
             mctx.save();
             mctx.fillStyle = playerColor;
             mctx.strokeStyle = '#ffffff';
             mctx.lineWidth = 12;
             mctx.beginPath();
+            const bSize = bData.minimapSize;
             if (b.type === 'base') {
-              const bSize = 80;
-              mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, 20) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
+              mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, bData.minimapCornerRadius) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
               mctx.fill();
               mctx.stroke();
             } else if (b.type === 'turret') {
-              const bSize = 60;
               mctx.arc(b.x, b.y, bSize, 0, Math.PI * 2);
               mctx.fill();
               mctx.stroke();
             } else if (b.type === 'wall') {
-              const bSize = 35;
-              mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, 8) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
+              mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, bData.minimapCornerRadius) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
               mctx.fill();
               mctx.stroke();
             }
@@ -1601,17 +1601,17 @@ export default function App() {
                  mfctx.arc(x, y, r, 0, Math.PI * 2);
                  mfctx.fill();
               };
-              if (store.me) drawMinimapVision(store.me.x, store.me.y, 600);
+              if (store.me) drawMinimapVision(store.me.x, store.me.y, constants.FOG_VISION_HERO);
               Object.values(store.state.buildings).forEach(b => {
                  if (b.ownerId === store.me?.id) {
                     let r = 200;
-                    if (b.type === 'base') r = 800;
-                    if (b.type === 'turret') r = 600;
+                    if (b.type === 'base') r = constants.FOG_VISION_BASE;
+                    if (b.type === 'turret') r = constants.FOG_VISION_TURRET;
                     drawMinimapVision(b.x, b.y, r);
                  }
               });
               Object.values(store.state.units).forEach(u => {
-                 if (u.ownerId === store.me?.id) drawMinimapVision(u.x, u.y, 400);
+                 if (u.ownerId === store.me?.id) drawMinimapVision(u.x, u.y, constants.FOG_VISION_MINER);
               });
               mfctx.restore();
               mfctx.globalCompositeOperation = 'source-over';
@@ -1750,7 +1750,7 @@ export default function App() {
             title="View Connected Players"
             className="metallic-button flex items-center gap-1.5 px-2 py-1 rounded-sm cursor-pointer text-xs font-display shrink-0"
           >
-            <Users className="w-3.5 h-3.5 text-cyan-400" />
+            <DynamicIcon name={icons.ui.users.name} library={icons.ui.users.library} className="w-3.5 h-3.5 text-cyan-400" />
             <span className="text-yellow-400">{playersCount}</span>
           </button>
           
@@ -1759,7 +1759,7 @@ export default function App() {
             title="Systems Manual"
             className="metallic-button flex items-center justify-center w-7 h-7 sm:w-auto sm:h-auto sm:px-2 sm:py-1 rounded-sm cursor-pointer text-xs font-display shrink-0"
           >
-            <HelpCircle className="w-4 h-4 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
+            <DynamicIcon name={icons.ui.help.name} library={icons.ui.help.library} className="w-4 h-4 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
           </button>
         </div>
 
@@ -1820,7 +1820,7 @@ export default function App() {
                 referrerPolicy="no-referrer"
               />
             ) : (
-              <User className="w-4 h-4 text-cyan-400" />
+              <DynamicIcon name={icons.ui.user.name} library={icons.ui.user.library} className="w-4 h-4 text-cyan-400" />
             )}
             <span className="hidden sm:inline">Cmdr</span>
           </button>
@@ -1841,7 +1841,7 @@ export default function App() {
                 : 'metallic-button text-gray-300'
             }`}
           >
-            <GiVillage className="w-4 h-4 text-cyan-400" />
+            <DynamicIcon name={icons.buildings.base.name} library={icons.buildings.base.library} className="w-4 h-4 text-cyan-400" />
             <span className="hidden sm:inline">Base</span>
           </button>
 
@@ -1854,7 +1854,7 @@ export default function App() {
                 : 'metallic-button text-gray-300'
             }`}
           >
-            <GiTreasureMap className="w-4 h-4 text-red-500" />
+            <DynamicIcon name={icons.ui.map.name} library={icons.ui.map.library} className="w-4 h-4 text-red-500" />
             <span className="hidden sm:inline">Map</span>
           </button>
 
@@ -1863,7 +1863,7 @@ export default function App() {
             title="Map Settings"
             className="metallic-button h-8 sm:h-9 px-2 sm:px-3 rounded-sm flex items-center justify-center gap-1 sm:gap-1.5 cursor-pointer text-xs font-display uppercase shrink-0 text-gray-300"
           >
-            <Settings className="w-4 h-4 text-zinc-300" />
+            <DynamicIcon name={icons.ui.settings.name} library={icons.ui.settings.library} className="w-4 h-4 text-zinc-300" />
             <span className="hidden sm:inline">Opt</span>
           </button>
         </div>
@@ -1903,7 +1903,7 @@ export default function App() {
               <div className="flex flex-col gap-2">
                 <div className="flex justify-between items-center border-b-2 border-zinc-700 pb-1.5">
                   <span className="font-display tracking-widest text-sm uppercase flex items-center gap-2 text-cyan-400">
-                    <GiMining className="w-4 h-4" /> Operations
+                    <DynamicIcon name={icons.buildings.miner.name} library={icons.buildings.miner.library} className="w-4 h-4" /> Operations
                   </span>
                   <div className="flex items-center gap-1.5">
                     <span className="metallic-panel-inset text-[10px] text-gray-400 px-2 py-0.5 rounded-sm font-sans font-bold shrink-0">
@@ -1913,7 +1913,7 @@ export default function App() {
                       onClick={() => setIsWorkersOpen(false)} 
                       className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm"
                     >
-                      <X className="w-4 h-4" />
+                      <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -1928,7 +1928,7 @@ export default function App() {
                       }}
                       className="w-full metallic-button flex items-center justify-center gap-1.5 h-9 rounded-sm font-display text-xs text-yellow-400 uppercase tracking-widest"
                     >
-                      <GiHammerNails className="w-4 h-4" />
+                      <DynamicIcon name={icons.ui.hammer.name} library={icons.ui.hammer.library} className="w-4 h-4" />
                       <span>Open Structures</span>
                     </button>
                   </div>
@@ -1963,9 +1963,13 @@ export default function App() {
                     {(() => {
                       const isCostTrait = store.me?.traits?.includes('cost');
                       const modifier = isCostTrait ? 0.75 : 1.0;
+                      const buildingData = (buildings as any).miner;
+                      const baseConstructionLvl = store.me?.upgrades?.base_construction || 0;
+                      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10));
+
                       const minerCost = {
-                        w: Math.floor(50 * modifier),
-                        s: Math.floor(20 * modifier)
+                        w: Math.floor(buildingData.cost.wood * modifier * discountFactor),
+                        s: Math.floor(buildingData.cost.stone * modifier * discountFactor)
                       };
                       const canAffordMiner = inventory.wood >= minerCost.w && inventory.stone >= minerCost.s;
                       const isBtnDisabled = !hasBase || !canAffordMiner;
@@ -1987,7 +1991,7 @@ export default function App() {
                                 : 'metallic-button text-slate-500 cursor-not-allowed'
                           }`}
                         >
-                          <UserPlus className="w-4 h-4" />
+                          <DynamicIcon name={icons.ui.userPlus.name} library={icons.ui.userPlus.library} className="w-4 h-4" />
                           <span>Buy Worker ({minerCost.w}w {minerCost.s}s)</span>
                         </button>
                       );
@@ -1996,9 +2000,9 @@ export default function App() {
                     {/* Rows */}
                     <div className={`space-y-1 ${!hasBase ? 'opacity-35 grayscale contrast-75 pointer-events-none select-none' : ''}`}>
                       {[
-                        { id: 'wood', label: 'Wood', color: 'text-amber-500', val: woodMiners, icon: GiWoodPile, iconCol: '#b45309' },
-                        { id: 'stone', label: 'Stone', color: 'text-slate-300', val: stoneMiners, icon: GiStoneBlock, iconCol: '#9ca3af' },
-                        { id: 'gold', label: 'Gold', color: 'text-yellow-400', val: goldMiners, icon: GiGoldBar, iconCol: '#eab308' }
+                        { id: 'wood', label: 'Wood', color: 'text-amber-500', val: woodMiners, icon: getIconComponent(icons.resources.wood.name, icons.resources.wood.library), iconCol: icons.resources.wood.color },
+                        { id: 'stone', label: 'Stone', color: 'text-slate-300', val: stoneMiners, icon: getIconComponent(icons.resources.stone.name, icons.resources.stone.library), iconCol: icons.resources.stone.color },
+                        { id: 'gold', label: 'Gold', color: 'text-yellow-400', val: goldMiners, icon: getIconComponent(icons.resources.gold.name, icons.resources.gold.library), iconCol: icons.resources.gold.color }
                       ].map(r => (
                         <div key={r.id} className="flex items-center justify-between metallic-panel-inset p-1.5 bg-zinc-900/50 hover:bg-zinc-900 border-x-0 border-b-0 border-t-zinc-800">
                           <div className="flex items-center gap-2 px-1 font-bold">
@@ -2037,30 +2041,25 @@ export default function App() {
               const isCostTrait = store.me?.traits?.includes('cost');
               const modifier = isCostTrait ? 0.75 : 1.0;
               
-              const baseCost = {
-                w: Math.floor(100 * modifier),
-                s: Math.floor(100 * modifier),
-                g: Math.floor(50 * modifier)
+              const getFinalCost = (type: string) => {
+                const bData = (buildings as any)[type];
+                const cost = bData.cost;
+                const baseConstructionLvl = store.me?.upgrades?.base_construction || 0;
+                const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10));
+
+                return {
+                  wood: Math.floor((cost.wood || 0) * modifier * discountFactor),
+                  stone: Math.floor((cost.stone || 0) * modifier * discountFactor),
+                  gold: Math.floor((cost.gold || 0) * modifier * discountFactor)
+                };
               };
 
-              const minerCost = {
-                w: Math.floor(50 * modifier),
-                s: Math.floor(20 * modifier)
-              };
+              const baseCost = getFinalCost('base');
+              const minerCost = getFinalCost('miner');
+              const wallCost = getFinalCost('wall');
+              const turretCost = getFinalCost('turret');
 
-              const wallCost = {
-                w: 0,
-                s: Math.floor(10 * modifier),
-                g: 0
-              };
-
-              const turretCost = {
-                w: Math.floor(50 * modifier),
-                s: Math.floor(50 * modifier),
-                g: Math.floor(20 * modifier)
-              };
-
-              const canAffordMiner = inventory.wood >= minerCost.w && inventory.stone >= minerCost.s;
+              const canAffordMiner = inventory.wood >= minerCost.wood && inventory.stone >= minerCost.stone;
 
               const isWorkerLocked = !hasBase;
               const isWallTurretLocked = !hasBase || (hasBase && totalMiners < 3);
@@ -2069,13 +2068,13 @@ export default function App() {
                 <div className="flex flex-col gap-2.5">
                   <div className="flex justify-between items-center border-b-2 border-zinc-700 pb-1.5">
                     <span className="font-display tracking-widest text-sm uppercase flex items-center gap-2 text-cyan-400">
-                      <GiHammerNails className="w-4 h-4" /> Structures & Units
+                      <DynamicIcon name={icons.ui.hammer.name} library={icons.ui.hammer.library} className="w-4 h-4" /> Structures & Units
                     </span>
                     <button 
                       onClick={() => { setIsBuildOpen(false); setBuildMode(null); }} 
                       className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm"
                     >
-                      <X className="w-4 h-4" />
+                      <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-4 h-4" />
                     </button>
                   </div>
 
@@ -2092,14 +2091,14 @@ export default function App() {
                         }`}
                       >
                         <div className="flex items-center gap-2">
-                          <GiVillage className="w-4 h-4 text-yellow-400" />
+                          <DynamicIcon name={icons.buildings.base.name} library={icons.buildings.base.library} className="w-4 h-4 text-yellow-400" />
                           <span className="text-[11px] uppercase font-display tracking-widest">Deploy Base</span>
                         </div>
                         <div className="flex items-center gap-1 text-[10px] font-sans font-bold">
                           <div className="flex items-center gap-1">
-                            <span className={inventory.wood < baseCost.w ? "text-red-400" : "text-zinc-400"}>{baseCost.w}w</span>
-                            <span className={inventory.stone < baseCost.s ? "text-red-400" : "text-zinc-400"}>{baseCost.s}s</span>
-                            <span className={inventory.gold < baseCost.g ? "text-red-400" : "text-zinc-400"}>{baseCost.g}g</span>
+                            <span className={inventory.wood < baseCost.wood ? "text-red-400" : "text-zinc-400"}>{baseCost.wood}w</span>
+                            <span className={inventory.stone < baseCost.stone ? "text-red-400" : "text-zinc-400"}>{baseCost.stone}s</span>
+                            <span className={inventory.gold < baseCost.gold ? "text-red-400" : "text-zinc-400"}>{baseCost.gold}g</span>
                           </div>
                         </div>
                       </button>
@@ -2122,7 +2121,7 @@ export default function App() {
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <UserPlus className={`w-4 h-4 ${isWorkerLocked ? 'text-zinc-600' : 'text-cyan-400'}`} />
+                        <DynamicIcon name={icons.ui.userPlus.name} library={icons.ui.userPlus.library} className={`w-4 h-4 ${isWorkerLocked ? 'text-zinc-600' : 'text-cyan-400'}`} />
                         <span className="text-[11px] uppercase font-display tracking-widest">Requisition Worker</span>
                       </div>
                       <div className="flex items-center gap-1 text-[10px] font-mono font-bold">
@@ -2130,8 +2129,8 @@ export default function App() {
                           <span className="text-[9px] uppercase font-sans text-slate-500 tracking-wide">Locked</span>
                         ) : (
                           <div className="flex items-center gap-1">
-                            <span className={inventory.wood < minerCost.w ? "text-red-400" : "text-slate-300"}>{minerCost.w}w</span>
-                            <span className={inventory.stone < minerCost.s ? "text-red-400" : "text-slate-300"}>{minerCost.s}s</span>
+                            <span className={inventory.wood < minerCost.wood ? "text-red-400" : "text-slate-300"}>{minerCost.wood}w</span>
+                            <span className={inventory.stone < minerCost.stone ? "text-red-400" : "text-slate-300"}>{minerCost.stone}s</span>
                           </div>
                         )}
                       </div>
@@ -2150,14 +2149,14 @@ export default function App() {
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <GiBrickWall className={`w-4 h-4 ${isWallTurretLocked ? 'text-zinc-600' : 'text-gray-400'}`} />
+                        <DynamicIcon name={icons.buildings.wall.name} library={icons.buildings.wall.library} className={`w-4 h-4 ${isWallTurretLocked ? 'text-zinc-600' : 'text-gray-400'}`} />
                         <span className="text-[11px] uppercase font-display tracking-widest">Fortification Wall</span>
                       </div>
                       <div className="flex items-center gap-1 text-[10px] font-sans font-bold">
                         {isWallTurretLocked ? (
                           <span className="text-[9px] uppercase font-sans text-zinc-600 tracking-wide">Locked</span>
                         ) : (
-                          <span className={inventory.stone < wallCost.s ? "text-red-400" : "text-zinc-400"}>{wallCost.s}s</span>
+                          <span className={inventory.stone < wallCost.stone ? "text-red-400" : "text-zinc-400"}>{wallCost.stone}s</span>
                         )}
                       </div>
                     </button>
@@ -2175,7 +2174,7 @@ export default function App() {
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <GiStoneTower className={`w-4 h-4 ${isWallTurretLocked ? 'text-zinc-600' : 'text-red-500'}`} />
+                        <DynamicIcon name={icons.buildings.turret.name} library={icons.buildings.turret.library} className={`w-4 h-4 ${isWallTurretLocked ? 'text-zinc-600' : 'text-red-500'}`} />
                         <span className="text-[11px] uppercase font-display tracking-widest">Defense Turret</span>
                       </div>
                       <div className="flex items-center gap-1 text-[10px] font-sans font-bold">
@@ -2183,9 +2182,9 @@ export default function App() {
                           <span className="text-[9px] uppercase font-sans text-zinc-600 tracking-wide">Locked</span>
                         ) : (
                           <div className="flex items-center gap-1">
-                            <span className={inventory.wood < turretCost.w ? "text-red-400" : "text-zinc-400"}>{turretCost.w}w</span>
-                            <span className={inventory.stone < turretCost.s ? "text-red-400" : "text-zinc-400"}>{turretCost.s}s</span>
-                            <span className={inventory.gold < turretCost.g ? "text-red-400" : "text-zinc-400"}>{turretCost.g}g</span>
+                            <span className={inventory.wood < turretCost.wood ? "text-red-400" : "text-zinc-400"}>{turretCost.wood}w</span>
+                            <span className={inventory.stone < turretCost.stone ? "text-red-400" : "text-zinc-400"}>{turretCost.stone}s</span>
+                            <span className={inventory.gold < turretCost.gold ? "text-red-400" : "text-zinc-400"}>{turretCost.gold}g</span>
                           </div>
                         )}
                       </div>
@@ -2197,112 +2196,28 @@ export default function App() {
 
             {/* 3. UPGRADES SUBPANEL */}
             {isUpgradesOpen && (() => {
-              const baseCost = { wood: 100, stone: 80, gold: 40 };
-              const getUpgradeCost = (level: number) => {
+              const getUpgradeCost = (upg: any, level: number) => {
                 const factor = Math.pow(1.5, level);
                 return {
-                  wood: Math.round(baseCost.wood * factor),
-                  stone: Math.round(baseCost.stone * factor),
-                  gold: Math.round(baseCost.gold * factor)
+                  wood: Math.round(upg.baseCost.wood * factor),
+                  stone: Math.round(upg.baseCost.stone * factor),
+                  gold: Math.round(upg.baseCost.gold * factor)
                 };
               };
 
               const getLevel = (id: string) => store.me?.upgrades?.[id] || 0;
 
-              const upgrades = [
-                {
-                  id: 'miner_speed',
-                  name: 'Hyper-Engines',
-                  description: 'Increases movement speed of miners.',
-                  category: 'Miners',
-                  target: 'Workers',
-                  effect: 'Speed',
-                  icon: Gauge,
-                  iconColor: 'text-sky-400'
-                },
-                {
-                  id: 'miner_capacity',
-                  name: 'Quantum Cargo',
-                  description: 'Miners carrying cap +10 resources.',
-                  category: 'Miners',
-                  target: 'Workers',
-                  effect: 'Capacity',
-                  icon: Backpack,
-                  iconColor: 'text-indigo-400'
-                },
-                {
-                  id: 'base_tax',
-                  name: 'Sovereign Tax',
-                  description: 'Passive wood/stone/gold near active base.',
-                  category: 'Base',
-                  target: 'Base',
-                  effect: 'Passive Income',
-                  icon: Coins,
-                  iconColor: 'text-amber-400'
-                },
-                {
-                  id: 'base_construction',
-                  name: 'Construct Beacon',
-                  description: 'Reduces training and construction costs by 10%.',
-                  category: 'Base',
-                  target: 'All Builds',
-                  effect: 'Cost Discount',
-                  icon: Sparkles,
-                  iconColor: 'text-fuchsia-400'
-                },
-                {
-                  id: 'wall_solar',
-                  name: 'Photon Plates',
-                  description: 'Walls passively generate wood and stone resource.',
-                  category: 'Wall',
-                  target: 'Defensive Walls',
-                  effect: 'Resource Generation',
-                  icon: Sun,
-                  iconColor: 'text-orange-400'
-                },
-                {
-                  id: 'wall_magnetic',
-                  name: 'Magnetic Express',
-                  description: 'Speeds up your hero near owned walls (+25%).',
-                  category: 'Wall',
-                  target: 'Hero Agent',
-                  effect: 'Near-Wall Speed',
-                  icon: Zap,
-                  iconColor: 'text-yellow-400'
-                },
-                {
-                  id: 'turret_collector',
-                  name: 'Vacuum Cores',
-                  description: 'Turrets attract and collect passive yields.',
-                  category: 'Turret',
-                  target: 'Turrets',
-                  effect: 'Auto-vacuum Yields',
-                  icon: Box,
-                  iconColor: 'text-emerald-400'
-                },
-                {
-                  id: 'turret_beam',
-                  name: 'Focal Laser',
-                  description: 'Increases manual gather extraction factor (+5).',
-                  category: 'Turret',
-                  target: 'Hero Agent',
-                  effect: 'Manual Laser Power',
-                  icon: Flame,
-                  iconColor: 'text-rose-400'
-                }
-              ];
-
               return (
                 <div className="flex flex-col gap-2.5">
                   <div className="flex justify-between items-center border-b-2 border-zinc-700 pb-1.5 font-bold">
                     <span className="font-display tracking-widest text-sm uppercase flex items-center gap-2 text-cyan-400">
-                      <ChevronsUp className="w-4 h-4 text-cyan-400" /> Tech Upgrades
+                      <DynamicIcon name={icons.ui.upgrade.name} library={icons.ui.upgrade.library} className="w-4 h-4 text-cyan-400" /> Tech Upgrades
                     </span>
                     <button 
                       onClick={() => setIsUpgradesOpen(false)} 
                       className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm transition-colors"
                     >
-                      <X className="w-4 h-4" />
+                      <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-4 h-4" />
                     </button>
                   </div>
 
@@ -2315,14 +2230,15 @@ export default function App() {
                   <div className="flex flex-col gap-1 pr-0.5 max-h-[30vh] overflow-y-auto">
                     {upgrades.map(upg => {
                       const lvl = getLevel(upg.id);
-                      const cost = getUpgradeCost(lvl);
+                      const cost = getUpgradeCost(upg, lvl);
                       const canAfford = (inventory.wood >= cost.wood) && (inventory.stone >= cost.stone) && (inventory.gold >= cost.gold);
 
                       let bonusStr = '';
                       if (upg.id === 'miner_speed') {
                         bonusStr = `${lvl * 25}% → ${(lvl + 1) * 25}%`;
                       } else if (upg.id === 'miner_capacity') {
-                        bonusStr = `${20 + lvl * 10} → ${20 + (lvl + 1) * 10}`;
+                        const baseCap = (buildings as any).miner.baseCapacity;
+                        bonusStr = `${baseCap + lvl * 10} → ${baseCap + (lvl + 1) * 10}`;
                       } else if (upg.id === 'base_tax') {
                         bonusStr = `+${lvl * 5} → +${(lvl + 1) * 5}`;
                       } else if (upg.id === 'base_construction') {
@@ -2345,8 +2261,8 @@ export default function App() {
                           }`}
                         >
                           <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <div className={`p-1.5 metallic-panel-inset rounded-sm shrink-0 ${upg.iconColor}`}>
-                              <upg.icon className="w-4 h-4" />
+                            <div className="p-1.5 metallic-panel-inset rounded-sm shrink-0">
+                              <DynamicIcon name={upg.icon} library={upg.iconLibrary} className="w-4 h-4" />
                             </div>
                             <div className="min-w-0 flex flex-col gap-0.5">
                               <div className="flex items-center gap-1.5">
@@ -2410,7 +2326,7 @@ export default function App() {
                 : 'bg-gradient-to-b from-[#2a3746] to-[#1c252f] text-[#67809a] opacity-90 hover:from-[#344558] hover:to-[#1d2732] hover:text-white rounded-none shadow-[inset_0_4px_6px_rgba(0,0,0,0.4)]'
             }`}
           >
-            <GiMining className={`w-5 h-5 sm:w-6 sm:h-6 mb-0.5 ${isWorkersOpen ? 'text-cyan-100' : 'text-cyan-500'}`} />
+            <DynamicIcon name={icons.buildings.miner.name} library={icons.buildings.miner.library} className={`w-5 h-5 sm:w-6 sm:h-6 mb-0.5 ${isWorkersOpen ? 'text-cyan-100' : 'text-cyan-500'}`} />
             <span className="text-[11px] sm:text-xs font-display tracking-widest uppercase leading-none mt-0.5">Miners</span>
             {unassignedMiners > 0 && (
               <span className="absolute top-1 right-2.5 flex h-2 w-2">
@@ -2436,7 +2352,7 @@ export default function App() {
                   : 'bg-gradient-to-b from-[#2a3746] to-[#1c252f] text-[#67809a] opacity-90 hover:from-[#344558] hover:to-[#1d2732] hover:text-white rounded-none shadow-[inset_0_4px_6px_rgba(0,0,0,0.4)]'
             }`}
           >
-            <GiHammerNails className={`w-5 h-5 sm:w-6 sm:h-6 mb-0.5 ${isBuildOpen ? 'text-cyan-100' : shouldFlashBuild ? 'text-red-200' : 'text-cyan-500'}`} />
+            <DynamicIcon name={icons.ui.hammer.name} library={icons.ui.hammer.library} className={`w-5 h-5 sm:w-6 sm:h-6 mb-0.5 ${isBuildOpen ? 'text-cyan-100' : shouldFlashBuild ? 'text-red-200' : 'text-cyan-500'}`} />
             <span className="text-[11px] sm:text-xs font-display tracking-widest uppercase leading-none mt-0.5">Structures</span>
           </button>
 
@@ -2454,7 +2370,7 @@ export default function App() {
                 : 'bg-gradient-to-b from-[#2a3746] to-[#1c252f] text-[#67809a] opacity-90 hover:from-[#344558] hover:to-[#1d2732] hover:text-white rounded-none shadow-[inset_0_4px_6px_rgba(0,0,0,0.4)]'
             }`}
           >
-            <ChevronsUp className={`w-5 h-5 sm:w-6 sm:h-6 mb-0.5 ${isUpgradesOpen ? 'text-cyan-100' : 'text-cyan-500'}`} />
+            <DynamicIcon name={icons.ui.upgrade.name} library={icons.ui.upgrade.library} className={`w-5 h-5 sm:w-6 sm:h-6 mb-0.5 ${isUpgradesOpen ? 'text-cyan-100' : 'text-cyan-500'}`} />
             <span className="text-[11px] sm:text-xs font-display tracking-widest uppercase leading-none mt-0.5">Upgrades</span>
           </button>
         </div>
@@ -2464,9 +2380,11 @@ export default function App() {
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm pointer-events-auto">
           <div className="metallic-panel p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
             <div className="flex justify-between items-center mb-4 border-b-2 border-zinc-700 pb-2">
-              <h2 className="text-xl font-display uppercase tracking-widest text-cyan-400 font-bold flex items-center gap-2"><HelpCircle className="w-6 h-6 border" /> Systems Manual</h2>
+              <h2 className="text-xl font-display uppercase tracking-widest text-cyan-400 font-bold flex items-center gap-2">
+                <DynamicIcon name={icons.ui.help.name} library={icons.ui.help.library} className="w-6 h-6 border" /> Systems Manual
+              </h2>
               <button onClick={() => setIsHelpOpen(false)} className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm">
-                <X className="w-5 h-5" />
+                <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-5 h-5" />
               </button>
             </div>
             <div className="space-y-3 text-sm font-sans text-zinc-300">
@@ -2492,10 +2410,10 @@ export default function App() {
           <div className="metallic-panel p-6 max-w-sm w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
             <div className="flex justify-between items-center mb-4 border-b-2 border-zinc-700 pb-2">
               <h2 className="text-xl font-display uppercase tracking-widest font-bold flex items-center gap-2 text-cyan-400">
-                <Settings className="w-5 h-5" /> Optical Overlay Parameters
+                <DynamicIcon name={icons.ui.settings.name} library={icons.ui.settings.library} className="w-5 h-5" /> Optical Overlay Parameters
               </h2>
               <button onClick={() => setIsSettingsOpen(false)} className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm transition-colors">
-                <X className="w-5 h-5" />
+                <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-5 h-5" />
               </button>
             </div>
             
@@ -2549,10 +2467,10 @@ export default function App() {
           <div className="metallic-panel p-6 max-w-sm w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
             <div className="flex justify-between items-center mb-4 border-b-2 border-zinc-700 pb-2">
               <h2 className="text-xl font-display font-bold uppercase tracking-widest flex items-center gap-2 text-cyan-400">
-                <Users className="w-5 h-5 animate-pulse" /> Active Agents ({playersCount})
+                <DynamicIcon name={icons.ui.users.name} library={icons.ui.users.library} className="w-5 h-5 animate-pulse" /> Active Agents ({playersCount})
               </h2>
               <button onClick={() => setIsPlayersListOpen(false)} className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm transition-colors">
-                <X className="w-5 h-5" />
+                <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-5 h-5" />
               </button>
             </div>
             
