@@ -1,0 +1,36 @@
+{
+  "base": {
+    "cost": { "wood": 100, "stone": 100, "gold": 50 },
+    "health": 100,
+    "size": 20,
+    "icon": "GiVillage",
+    "displayName": "Faction Base",
+    "minimapSize": 80,
+    "minimapCornerRadius": 20
+  },
+  "wall": {
+    "cost": { "wood": 0, "stone": 10, "gold": 0 },
+    "health": 100,
+    "size": 10,
+    "icon": "GiBrickWall",
+    "displayName": "Fortification Wall",
+    "minimapSize": 35,
+    "minimapCornerRadius": 8
+  },
+  "turret": {
+    "cost": { "wood": 50, "stone": 50, "gold": 20 },
+    "health": 100,
+    "size": 15,
+    "icon": "GiStoneTower",
+    "displayName": "Defense Turret",
+    "minimapSize": 60
+  },
+  "miner": {
+    "cost": { "wood": 50, "stone": 20, "gold": 0 },
+    "size": 11,
+    "icon": "GiMining",
+    "displayName": "Worker",
+    "baseCapacity": 20,
+    "minimapSize": 11
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "resources": {
+    "wood": { "library": "gi", "name": "GiWoodPile", "color": "#b45309" },
+    "stone": { "library": "gi", "name": "GiStoneBlock", "color": "#9ca3af" },
+    "gold": { "library": "gi", "name": "GiGoldBar", "color": "#eab308" }
+  },
+  "buildings": {
+    "base": { "library": "gi", "name": "GiVillage", "color": "#ffffff" },
+    "wall": { "library": "gi", "name": "GiBrickWall", "color": "#ffffff" },
+    "turret": { "library": "gi", "name": "GiStoneTower", "color": "#ffffff" },
+    "miner": { "library": "gi", "name": "GiMining", "color": "#ffffff" }
+  },
+  "ui": {
+    "help": { "library": "lucide", "name": "HelpCircle" },
+    "close": { "library": "lucide", "name": "X" },
+    "user": { "library": "lucide", "name": "User" },
+    "users": { "library": "lucide", "name": "Users" },
+    "userPlus": { "library": "lucide", "name": "UserPlus" },
+    "upgrade": { "library": "lucide", "name": "ChevronsUp" },
+    "settings": { "library": "lucide", "name": "Settings" },
+    "map": { "library": "gi", "name": "GiTreasureMap" },
+    "hammer": { "library": "gi", "name": "GiHammerNails" }
+  }
+}

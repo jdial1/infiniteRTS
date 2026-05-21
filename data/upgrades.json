@@ -1,0 +1,90 @@
+[
+  {
+    "id": "miner_speed",
+    "name": "Hyper-Engines",
+    "description": "Increases movement speed of miners.",
+    "category": "Miners",
+    "target": "Workers",
+    "effect": "Speed",
+    "icon": "Gauge",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "miner_capacity",
+    "name": "Quantum Cargo",
+    "description": "Miners carrying cap +10 resources.",
+    "category": "Miners",
+    "target": "Workers",
+    "effect": "Capacity",
+    "icon": "Backpack",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "base_tax",
+    "name": "Sovereign Tax",
+    "description": "Passive wood/stone/gold near active base.",
+    "category": "Base",
+    "target": "Base",
+    "effect": "Passive Income",
+    "icon": "Coins",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "base_construction",
+    "name": "Construct Beacon",
+    "description": "Reduces training and construction costs by 10%.",
+    "category": "Base",
+    "target": "All Builds",
+    "effect": "Cost Discount",
+    "icon": "Sparkles",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "wall_solar",
+    "name": "Photon Plates",
+    "description": "Walls passively generate wood and stone resource.",
+    "category": "Wall",
+    "target": "Defensive Walls",
+    "effect": "Resource Generation",
+    "icon": "Sun",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "wall_magnetic",
+    "name": "Magnetic Express",
+    "description": "Speeds up your hero near owned walls (+25%).",
+    "category": "Wall",
+    "target": "Hero Agent",
+    "effect": "Near-Wall Speed",
+    "icon": "Zap",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "turret_collector",
+    "name": "Vacuum Cores",
+    "description": "Turrets attract and collect passive yields.",
+    "category": "Turret",
+    "target": "Turrets",
+    "effect": "Auto-vacuum Yields",
+    "icon": "Box",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "turret_beam",
+    "name": "Focal Laser",
+    "description": "Increases manual gather extraction factor (+5).",
+    "category": "Turret",
+    "target": "Hero Agent",
+    "effect": "Manual Laser Power",
+    "icon": "Flame",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  }
+]
