@@ -1658,8 +1658,8 @@ export default function App() {
               Overlord Command
             </h2>
             <div className="flex items-center justify-center gap-2 mt-4 opacity-50">
-              <div className="w-4 h-4 bg-zinc-400" style={{ clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)' }} />
-              <div className="w-4 h-4 bg-zinc-400 rotate-180" style={{ clipPath: 'polygon(50% 0%, 100% 100%, 0% 100%)' }} />
+              <div className="w-4 h-4 bg-zinc-400 clip-triangle" />
+              <div className="w-4 h-4 bg-zinc-400 rotate-180 clip-triangle" />
               <span className="text-xs tracking-widest uppercase font-display text-zinc-400">Volkov Industries</span>
             </div>
           </div>
@@ -1739,10 +1739,7 @@ export default function App() {
       </div>
 
        {/* Upper Solid Nav Bar */}
-      <div className="absolute top-2 left-2 right-2 metallic-panel p-2 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
-        <style dangerouslySetInnerHTML={{__html: `
-          .no-scrollbar::-webkit-scrollbar { display: none; }
-        `}} />
+      <div className="absolute top-2 left-2 right-2 metallic-panel p-2 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 border-2 border-[#1c252f] rounded-sm ${connected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 shadow-[0_0_8px_#ef4444]'} animate-pulse shrink-0`} />
@@ -1877,7 +1874,7 @@ export default function App() {
         {showMinimap && (
           <div className="metallic-panel p-2 pointer-events-auto shadow-[0_4px_16px_rgba(0,0,0,0.9)]">
             <div className="relative border-2 border-black rounded-sm overflow-hidden flex shadow-[inset_0_0_12px_rgba(0,0,0,0.8)] bg-[#0d131a]">
-               <canvas ref={minimapCanvasRef} width={200} height={200} className="block w-full h-full object-contain" style={{ imageRendering: 'pixelated' }} />
+               <canvas ref={minimapCanvasRef} width={200} height={200} className="block w-full h-full object-contain image-pixelated" />
                {/* Decorative corners */}
                <div className="absolute top-0 left-0 w-3 h-3 border-t-2 border-l-2 border-cyan-400 pointer-events-none opacity-50 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
                <div className="absolute top-0 right-0 w-3 h-3 border-t-2 border-r-2 border-cyan-400 pointer-events-none opacity-50 shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
@@ -2005,7 +2002,7 @@ export default function App() {
                       ].map(r => (
                         <div key={r.id} className="flex items-center justify-between metallic-panel-inset p-1.5 bg-zinc-900/50 hover:bg-zinc-900 border-x-0 border-b-0 border-t-zinc-800">
                           <div className="flex items-center gap-2 px-1 font-bold">
-                            <r.icon className="w-4 h-4" style={{ color: r.iconCol }} />
+                            <r.icon className="w-4 h-4 dynamic-icon-color" style={{ '--icon-color': r.iconCol } as React.CSSProperties} />
                             <span className={`${r.color} text-[11px] font-display tracking-widest uppercase`}>{r.label}</span>
                           </div>
                           <div className="flex items-center gap-1.5">
@@ -2622,14 +2619,14 @@ export default function App() {
                           <div className="relative">
                             <img 
                               src={`https://api.dicebear.com/7.x/croodles/svg?seed=${encodeURIComponent(player.name || player.id)}`} 
-                              className="w-8 h-8 rounded-full border bg-gray-950 p-0.5 shadow"
-                              style={{ borderColor: player.color }}
+                              className="w-8 h-8 rounded-full border bg-gray-950 p-0.5 shadow dynamic-player-border"
+                              style={{ '--player-color': player.color } as React.CSSProperties}
                               alt={player.name}
                               referrerPolicy="no-referrer"
                             />
                             <span 
-                              className="absolute bottom-0 right-0 w-2 h-2 rounded-full border border-gray-800"
-                              style={{ backgroundColor: player.color }}
+                              className="absolute bottom-0 right-0 w-2 h-2 rounded-full border border-gray-800 dynamic-player-bg"
+                              style={{ '--player-color': player.color } as React.CSSProperties}
                             />
                           </div>
                           
@@ -2755,13 +2752,13 @@ export default function App() {
         {/* Visual vertical slider track */}
         <div className="w-2 h-24 bg-black border border-zinc-700/50 rounded-sm relative overflow-visible flex items-center justify-center">
           <div 
-            className="absolute h-full w-full bg-cyan-900 border-x border-cyan-800 rounded-sm bottom-0 left-0 transition-all origin-bottom"
-            style={{ transform: `scaleY(${(zoomIndicator.value - 0.2) / 2.8})` }}
+            className="absolute h-full w-full bg-cyan-900 border-x border-cyan-800 rounded-sm bottom-0 left-0 transition-all origin-bottom zoom-indicator-bar"
+            style={{ '--zoom-scale-y': (zoomIndicator.value - 0.2) / 2.8 } as React.CSSProperties}
           />
           {/* Knob indicator */}
           <div 
-            className="absolute w-4 h-2 rounded-sm bg-cyan-400 border border-white shadow-[0_0_8px_rgba(34,211,238,0.8)] transition-all"
-            style={{ bottom: `${((zoomIndicator.value - 0.2) / 2.8) * 100}%`, transform: 'translateY(50%)' }}
+            className="absolute w-4 h-2 rounded-sm bg-cyan-400 border border-white shadow-[0_0_8px_rgba(34,211,238,0.8)] transition-all zoom-indicator-knob"
+            style={{ '--zoom-bottom-percent': `${((zoomIndicator.value - 0.2) / 2.8) * 100}%` } as React.CSSProperties}
           />
         </div>
       </div>

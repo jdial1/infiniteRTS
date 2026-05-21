@@ -25,6 +25,35 @@
   .metallic-button-red {
     @apply bg-gradient-to-b from-[#991a1a] to-[#590e0e] border-[2px] border-t-[#f86565] border-l-[#f86565] border-b-[#1c0404] border-r-[#1c0404] shadow-[0_4px_6px_rgba(0,0,0,0.6)] active:from-[#590e0e] active:to-[#3b0808] active:border-t-[#1c0404] active:border-l-[#1c0404] active:border-b-[#991a1a] active:border-r-[#991a1a] rounded-md font-display text-white tracking-widest uppercase;
   }
+  .clip-triangle {
+    clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+  .image-pixelated {
+    image-rendering: pixelated;
+  }
+  .dynamic-icon-color {
+    color: var(--icon-color);
+  }
+  .dynamic-player-border {
+    border-color: var(--player-color);
+  }
+  .dynamic-player-bg {
+    background-color: var(--player-color);
+  }
+  .zoom-indicator-bar {
+    transform: scaleY(var(--zoom-scale-y));
+  }
+  .zoom-indicator-knob {
+    bottom: var(--zoom-bottom-percent);
+    transform: translateY(50%);
+  }
 }
 
 @keyframes flash-border {
