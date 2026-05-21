@@ -1,0 +1,43 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Russo+One&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Chakra Petch", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Russo One", ui-sans-serif, system-ui, sans-serif;
+  
+  --color-zinc-850: #202024;
+  --color-zinc-950: #09090b;
+}
+
+@layer utilities {
+  .metallic-panel {
+    @apply bg-gradient-to-b from-[#2c3643] to-[#1b2229] border-[2px] border-t-[#596d82] border-l-[#596d82] border-b-[#0a0d10] border-r-[#0a0d10] shadow-[0_6px_16px_rgba(0,0,0,0.8)] rounded-md;
+  }
+  .metallic-panel-inset {
+    @apply bg-[#151a21] border-[2px] border-t-[#080b0d] border-l-[#080b0d] border-b-[#354353] border-r-[#354353] shadow-[inset_0_4px_12px_rgba(0,0,0,0.9)] rounded-md text-gray-200;
+  }
+  .metallic-button {
+    @apply bg-gradient-to-b from-[#3a4959] to-[#202933] border-[2px] border-t-[#70879e] border-l-[#70879e] border-b-[#0b0e11] border-r-[#0b0e11] shadow-[0_4px_6px_rgba(0,0,0,0.6)] transition-all active:from-[#202933] active:to-[#151a21] active:border-t-[#080b0d] active:border-l-[#080b0d] active:border-b-[#475b70] active:border-r-[#475b70] rounded-md font-display text-white tracking-widest uppercase text-shadow-sm;
+  }
+  .metallic-button-selected {
+    @apply bg-gradient-to-b from-[#1b4359] to-[#0c222e] border-[2px] border-t-[#4bc0f0] border-l-[#4bc0f0] border-b-[#050f15] border-r-[#050f15] shadow-[inset_0_4px_8px_rgba(0,0,0,0.8)] rounded-md font-display text-white tracking-widest uppercase;
+  }
+  .metallic-button-red {
+    @apply bg-gradient-to-b from-[#991a1a] to-[#590e0e] border-[2px] border-t-[#f86565] border-l-[#f86565] border-b-[#1c0404] border-r-[#1c0404] shadow-[0_4px_6px_rgba(0,0,0,0.6)] active:from-[#590e0e] active:to-[#3b0808] active:border-t-[#1c0404] active:border-l-[#1c0404] active:border-b-[#991a1a] active:border-r-[#991a1a] rounded-md font-display text-white tracking-widest uppercase;
+  }
+}
+
+@keyframes flash-border {
+  0%, 100% {
+    border-color: rgba(99, 102, 241, 0.4);
+    box-shadow: 0 0 2px rgba(99, 102, 241, 0.2);
+  }
+  50% {
+    border-color: rgba(244, 63, 94, 1.0);
+    box-shadow: 0 0 12px rgba(244, 63, 94, 0.85);
+  }
+}
+
+.animate-flash-border {
+  animation: flash-border 1.5s infinite ease-in-out;
+}

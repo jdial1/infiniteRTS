@@ -1,0 +1,6 @@
+{
+  "name": "Infinite RTS",
+  "description": "A persistent, multi-player, socket.io-powered 2D RTS where you gather, build, and explore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
