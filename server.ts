@@ -68,7 +68,7 @@ function generateChunk(cx: number, cy: number) {
       type,
       x,
       y,
-      amount: Math.floor(randomInt(100, 500) * scale)
+      amount: Math.floor(randomInt(100, 500) * scale * 10)
     };
     gameState.resources[rId] = r;
     res.push(r);
