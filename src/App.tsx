@@ -1653,14 +1653,14 @@ export default function App() {
   const shouldFlashBuild = !isBuildOpen && (!hasBase || totalMiners === 0);
 
   return (
-    <div className="relative w-screen h-screen overflow-hidden bg-gray-900 select-none text-slate-100">
+    <div className="fixed inset-0 w-screen h-dvh overflow-hidden bg-gray-900 select-none text-slate-100">
       <canvas ref={canvasRef} className="absolute inset-0 z-0 cursor-crosshair touch-none" />
       
       {/* --- Main Menu Overlay --- */}
       {scene === 'menu' && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-between p-4 sm:p-8 bg-zinc-950/80 backdrop-blur-sm pointer-events-auto overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-between p-4 sm:p-8 bg-zinc-950/80 backdrop-blur-sm pointer-events-auto overflow-y-auto no-scrollbar">
           {/* Logo & Header */}
-          <div className="w-full max-w-lg mt-8 sm:mt-16 text-center">
+          <div className="w-full max-w-lg mt-4 sm:mt-16 text-center">
             <h1 className="font-display tracking-[0.2em] text-3xl sm:text-5xl text-[#f86565] drop-shadow-[0_4px_4px_rgba(0,0,0,0.8)] uppercase leading-none mb-2">
               <span className="text-4xl sm:text-6xl leading-none mr-2">★</span>RED OCTOBER:
             </h1>
@@ -1697,7 +1697,7 @@ export default function App() {
           )}
 
           {/* Action Grid */}
-          <div className="w-full max-w-sm grid grid-cols-2 gap-3 mb-16 sm:mb-24">
+          <div className="w-full max-w-sm grid grid-cols-2 gap-2 sm:gap-3 mb-8 sm:mb-24">
             <button className="col-span-1 py-4 flex flex-col items-center justify-center gap-2 metallic-button opacity-50 cursor-not-allowed">
               <span className="text-xl">🗺️</span>
               <span className="text-[10px] sm:text-xs">Campaign</span>
@@ -1723,8 +1723,8 @@ export default function App() {
       )}
 
       {/* Combat Event Logs */}
-      <div className="absolute left-2 sm:left-4 top-[110px] sm:top-[104px] z-20 flex flex-col gap-1 pointer-events-auto max-w-[200px] sm:max-w-xs">
-        {combatLogs.map(log => {
+      <div className="absolute left-1 sm:left-4 top-[88px] sm:top-[104px] z-20 flex flex-col gap-1 pointer-events-auto max-w-[200px] sm:max-w-xs">
+        {combatLogs.slice(window.innerWidth < 640 ? -3 : -10).map(log => {
           const age = Date.now() - log.time;
           const isNew = age < 500;
           return (
@@ -1749,32 +1749,32 @@ export default function App() {
       </div>
 
        {/* Resource Bar */}
-      <div className="absolute top-2 left-2 right-2 metallic-panel p-1 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
+      <div className="absolute top-1 sm:top-2 left-1 sm:left-2 right-1 sm:right-2 metallic-panel p-0.5 sm:p-1 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
         {/* Wood */}
-        <div className="flex-1 flex flex-col items-center px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
-           <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0.5">Wood</span>
-           <span className="text-[#facc15] font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
-             {Math.floor(inventory.wood)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.wood}/S</span>
+        <div className="flex-1 flex flex-col items-center px-1 sm:px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
+           <span className="text-[7px] sm:text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0 sm:mb-0.5">Wood</span>
+           <span className="text-[#facc15] font-display font-medium text-[10px] sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
+             {Math.floor(inventory.wood)} <span className="text-[7px] sm:text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.wood}</span>
            </span>
         </div>
         {/* Stone */}
-        <div className="flex-1 flex flex-col items-center px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
-           <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0.5">Stone</span>
-           <span className="text-gray-300 font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(209,213,219,0.5)] leading-none">
-             {Math.floor(inventory.stone)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.stone}/S</span>
+        <div className="flex-1 flex flex-col items-center px-1 sm:px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
+           <span className="text-[7px] sm:text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0 sm:mb-0.5">Stone</span>
+           <span className="text-gray-300 font-display font-medium text-[10px] sm:text-sm drop-shadow-[0_0_4px_rgba(209,213,219,0.5)] leading-none">
+             {Math.floor(inventory.stone)} <span className="text-[7px] sm:text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.stone}</span>
            </span>
         </div>
         {/* Gold */}
-        <div className="flex-1 flex flex-col items-center px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
-           <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0.5">Gold</span>
-           <span className="text-[#facc15] font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
-             {Math.floor(inventory.gold)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.gold}/S</span>
+        <div className="flex-1 flex flex-col items-center px-1 sm:px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
+           <span className="text-[7px] sm:text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0 sm:mb-0.5">Gold</span>
+           <span className="text-[#facc15] font-display font-medium text-[10px] sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
+             {Math.floor(inventory.gold)} <span className="text-[7px] sm:text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.gold}</span>
            </span>
         </div>
       </div>
 
        {/* Upper Solid Nav Bar */}
-      <div className="absolute top-[56px] left-2 right-2 metallic-panel p-1 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
+      <div className="absolute top-[44px] sm:top-[56px] left-1 sm:left-2 right-1 sm:right-2 metallic-panel p-0.5 sm:p-1 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 border-2 border-[#1c252f] rounded-sm ${connected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 shadow-[0_0_8px_#ef4444]'} animate-pulse shrink-0`} />
@@ -2085,7 +2085,7 @@ export default function App() {
                     </button>
                   </div>
 
-                  <div className="flex flex-col gap-1.5 max-h-[30vh] overflow-y-auto pr-0.5">
+                  <div className="flex flex-col gap-1.5 max-h-[30vh] sm:max-h-[40vh] overflow-y-auto pr-0.5">
                     {/* Faction Base */}
                     {!hasBase && (
                       <button
@@ -2234,7 +2234,7 @@ export default function App() {
                     </div>
                   )}
 
-                  <div className="flex flex-col gap-1 pr-0.5 max-h-[30vh] overflow-y-auto">
+                  <div className="flex flex-col gap-1 pr-0.5 max-h-[30vh] sm:max-h-[40vh] overflow-y-auto">
                     {upgrades.filter(upg => !upg.requiredTrait || store.me?.traits?.includes(upg.requiredTrait as any)).map(upg => {
                       const lvl = getLevel(upg.id);
                       const cost = getUpgradeCost(upg, lvl);
@@ -2391,7 +2391,7 @@ export default function App() {
 
       {isHelpOpen && (
         <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm pointer-events-auto">
-          <div className="metallic-panel p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
+          <div className="metallic-panel p-4 sm:p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white my-auto">
             <div className="flex justify-between items-center mb-4 border-b-2 border-zinc-700 pb-2">
               <h2 className="text-xl font-display uppercase tracking-widest text-cyan-400 font-bold flex items-center gap-2">
                 <DynamicIcon name={icons.ui.help.name} library={icons.ui.help.library} className="w-6 h-6 border" /> Systems Manual
@@ -2641,9 +2641,9 @@ export default function App() {
         </div>
       )}
 
-      {store.me && store.me.traits && store.me.traits.length === 0 && (
-        <div className="absolute inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md pointer-events-auto">
-          <div className="metallic-panel p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
+      {scene === 'playing' && store.me && store.me.traits && store.me.traits.length === 0 && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md pointer-events-auto overflow-y-auto">
+          <div className="metallic-panel p-4 sm:p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white my-auto">
             <div className="mb-4 text-center">
               <h2 className="text-2xl font-display tracking-widest uppercase font-bold mb-2 text-cyan-400">Select Doctrine</h2>
               <p className="text-sm font-sans font-bold text-zinc-400 uppercase">Authorize <strong className="text-white">2 protocols</strong> for your command.</p>
