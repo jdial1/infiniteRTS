@@ -1723,7 +1723,7 @@ export default function App() {
       )}
 
       {/* Combat Event Logs */}
-      <div className="absolute left-2 sm:left-4 top-[70px] sm:top-16 z-20 flex flex-col gap-1 pointer-events-auto max-w-[200px] sm:max-w-xs">
+      <div className="absolute left-2 sm:left-4 top-[110px] sm:top-[104px] z-20 flex flex-col gap-1 pointer-events-auto max-w-[200px] sm:max-w-xs">
         {combatLogs.map(log => {
           const age = Date.now() - log.time;
           const isNew = age < 500;
@@ -1748,8 +1748,33 @@ export default function App() {
         })}
       </div>
 
+       {/* Resource Bar */}
+      <div className="absolute top-2 left-2 right-2 metallic-panel p-1 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
+        {/* Wood */}
+        <div className="flex-1 flex flex-col items-center px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
+           <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0.5">Wood</span>
+           <span className="text-[#facc15] font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
+             {Math.floor(inventory.wood)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.wood}/S</span>
+           </span>
+        </div>
+        {/* Stone */}
+        <div className="flex-1 flex flex-col items-center px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
+           <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0.5">Stone</span>
+           <span className="text-gray-300 font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(209,213,219,0.5)] leading-none">
+             {Math.floor(inventory.stone)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.stone}/S</span>
+           </span>
+        </div>
+        {/* Gold */}
+        <div className="flex-1 flex flex-col items-center px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
+           <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-0.5">Gold</span>
+           <span className="text-[#facc15] font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
+             {Math.floor(inventory.gold)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.gold}/S</span>
+           </span>
+        </div>
+      </div>
+
        {/* Upper Solid Nav Bar */}
-      <div className="absolute top-2 left-2 right-2 metallic-panel p-2 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
+      <div className="absolute top-[56px] left-2 right-2 metallic-panel p-1 flex flex-nowrap items-center justify-between gap-1 sm:gap-2 pointer-events-auto z-10 text-white select-none overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-2 shrink-0">
           <div className="flex items-center gap-2">
             <span className={`w-3 h-3 border-2 border-[#1c252f] rounded-sm ${connected ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-500 shadow-[0_0_8px_#ef4444]'} animate-pulse shrink-0`} />
@@ -1771,37 +1796,6 @@ export default function App() {
           >
             <DynamicIcon name={icons.ui.help.name} library={icons.ui.help.library} className="w-4 h-4 text-cyan-400 drop-shadow-[0_0_8px_rgba(34,211,238,0.5)]" />
           </button>
-        </div>
-
-        {/* Center Part: Compact Resource Counter with rates */}
-        <div className="flex items-center gap-1.5 sm:gap-2 metallic-panel-inset px-2 py-1.5 rounded-sm shrink bg-[#0b1016] border-2 border-black">
-          {/* Wood */}
-          <div className="flex flex-col items-start px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
-             <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-1">Wood (MAT)</span>
-             <span className="text-[#facc15] font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
-               ${Math.floor(inventory.wood)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.wood}/S</span>
-             </span>
-          </div>
-
-          <div className="h-5 w-[2px] bg-black shadow-[1px_0_0_#354353] shrink-0" />
-
-          {/* Stone */}
-          <div className="flex flex-col items-start px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
-             <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-1">Stone (ORE)</span>
-             <span className="text-gray-300 font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(209,213,219,0.5)] leading-none">
-               ${Math.floor(inventory.stone)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.stone}/S</span>
-             </span>
-          </div>
-
-          <div className="h-5 w-[2px] bg-black shadow-[1px_0_0_#354353] shrink-0" />
-
-          {/* Gold */}
-          <div className="flex flex-col items-start px-2 bg-gradient-to-b from-[#1c252f] to-[#151c24] border border-[#2a3746] rounded-sm py-0.5">
-             <span className="text-[8px] text-[#67809a] font-display uppercase tracking-wider leading-none mb-1">Gold (CR)</span>
-             <span className="text-[#facc15] font-display font-medium text-xs sm:text-sm drop-shadow-[0_0_4px_rgba(250,204,21,0.5)] leading-none">
-               ${Math.floor(inventory.gold)} <span className="text-[8px] text-[#22d3ee] font-sans font-bold">+{rates.gold}/S</span>
-             </span>
-          </div>
         </div>
 
         {/* Right Part: Center camera buttons and minimap button */}
