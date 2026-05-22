@@ -935,7 +935,7 @@ export default function App() {
         // Draw Resources
         for (const rId in store.state.resources) {
           const r = store.state.resources[rId];
-          const size = 10 + r.amount / 50;
+          const size = 16;
           let img = null;
           if (r.type === 'wood') img = woodIconImg;
           if (r.type === 'stone') img = stoneIconImg;

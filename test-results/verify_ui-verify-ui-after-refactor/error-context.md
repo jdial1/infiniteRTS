@@ -6,8 +6,8 @@
 
 # Test info
 
-- Name: verify_mascots.spec.ts >> verify mascot selection and display
-- Location: verify_mascots.spec.ts:3:1
+- Name: verify_ui.spec.ts >> verify ui after refactor
+- Location: verify_ui.spec.ts:3:1
 
 # Error details
 
