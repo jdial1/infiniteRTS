@@ -23,7 +23,7 @@
   },
   "mascots": {
     "speed_strength": { "library": "gi", "name": "GiTigerHead", "color": "#f97316", "label": "The Iron Jaguar" },
-    "speed_cost": { "library": "gi", "name": "GiFalcon", "color": "#38bdf8", "label": "The Swift Falcon" },
+    "speed_cost": { "library": "gi", "name": "GiEagleEmblem", "color": "#38bdf8", "label": "The Swift Falcon" },
     "strength_cost": { "library": "gi", "name": "GiElephantHead", "color": "#10b981", "label": "The Great Tusk" }
   }
 }
