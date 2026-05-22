@@ -200,7 +200,8 @@ async function startServer() {
       const costModifier = hasCostTrait ? 0.75 : 1.0; 
 
       const baseConstructionLvl = player.upgrades?.base_construction || 0;
-      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10));
+      const traitCostLvl = player.upgrades?.trait_cost_upg || 0;
+      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10) - (traitCostLvl * 0.05));
 
       const finalCost = {
         wood: Math.floor(cost.wood * costModifier * discountFactor),
@@ -218,7 +219,8 @@ async function startServer() {
         player.inventory.gold -= finalCost.gold;
 
         const hasStrengthTrait = player.traits.includes('strength');
-        const healthModifier = hasStrengthTrait ? 1.5 : 1.0;
+        const traitStrengthLvl = player.upgrades?.trait_strength_upg || 0;
+        const healthModifier = (hasStrengthTrait ? 1.5 : 1.0) * (1 + traitStrengthLvl * 0.25);
 
         const bId = uuidv4();
         const b: Building = {
@@ -246,7 +248,8 @@ async function startServer() {
         const costModifier = hasCostTrait ? 0.75 : 1.0;
         
         const baseConstructionLvl = player.upgrades?.base_construction || 0;
-        const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10));
+        const traitCostLvl = player.upgrades?.trait_cost_upg || 0;
+        const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10) - (traitCostLvl * 0.05));
 
         const finalCost = {
           wood: Math.floor(baseCost.wood * costModifier * discountFactor),
@@ -292,6 +295,10 @@ async function startServer() {
 
       const upgradeMetadata = upgrades.find(u => u.id === data.upgradeId);
       if (!upgradeMetadata) return;
+
+      if ((upgradeMetadata as any).requiredTrait && !player.traits.includes((upgradeMetadata as any).requiredTrait)) {
+        return;
+      }
 
       if (!player.upgrades) {
         player.upgrades = {};
@@ -524,7 +531,8 @@ async function startServer() {
          
          const hasSpeedTrait = p.traits.includes('speed');
          const minerSpeedLvl = p.upgrades?.miner_speed || 0;
-         const MINER_SPEED = (hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 25);
+         const traitSpeedLvl = p.upgrades?.trait_speed_upg || 0;
+         const MINER_SPEED = ((hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 25)) * (1 + traitSpeedLvl * 0.10);
          
          if (u.state === 'idle') {
             if (!u.assignedResource) return;

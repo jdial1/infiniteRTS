@@ -725,7 +725,8 @@ export default function App() {
             speedMultiplier += wallMagneticLvl * 0.25;
           }
         }
-        const speed = (hasSpeedTrait ? constants.HERO_SPEED_BOOST : constants.HERO_SPEED) * speedMultiplier * dt;
+        const traitSpeedLvl = store.me.upgrades?.trait_speed_upg || 0;
+        const speed = (hasSpeedTrait ? constants.HERO_SPEED_BOOST : constants.HERO_SPEED) * (1 + traitSpeedLvl * 0.10) * speedMultiplier * dt;
         let moved = false;
 
 
@@ -2054,7 +2055,8 @@ export default function App() {
                 const bData = (buildings as any)[type];
                 const cost = bData.cost;
                 const baseConstructionLvl = store.me?.upgrades?.base_construction || 0;
-                const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10));
+                const traitCostLvl = store.me?.upgrades?.trait_cost_upg || 0;
+                const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10) - (traitCostLvl * 0.05));
 
                 return {
                   wood: Math.floor((cost.wood || 0) * modifier * discountFactor),
@@ -2237,7 +2239,7 @@ export default function App() {
                   )}
 
                   <div className="flex flex-col gap-1 pr-0.5 max-h-[30vh] overflow-y-auto">
-                    {upgrades.map(upg => {
+                    {upgrades.filter(upg => !upg.requiredTrait || store.me?.traits?.includes(upg.requiredTrait as any)).map(upg => {
                       const lvl = getLevel(upg.id);
                       const cost = getUpgradeCost(upg, lvl);
                       const canAfford = (inventory.wood >= cost.wood) && (inventory.stone >= cost.stone) && (inventory.gold >= cost.gold);
@@ -2250,6 +2252,12 @@ export default function App() {
                         bonusStr = `${baseCap + lvl * 10} → ${baseCap + (lvl + 1) * 10}`;
                       } else if (upg.id === 'base_tax') {
                         bonusStr = `+${lvl * 5} → +${(lvl + 1) * 5}`;
+                      } else if (upg.id === 'trait_speed_upg') {
+                        bonusStr = `+${lvl * 10}% → +${(lvl + 1) * 10}%`;
+                      } else if (upg.id === 'trait_strength_upg') {
+                        bonusStr = `+${lvl * 25}% → +${(lvl + 1) * 25}%`;
+                      } else if (upg.id === 'trait_cost_upg') {
+                        bonusStr = `-${lvl * 5}% → -${(lvl + 1) * 5}%`;
                       } else if (upg.id === 'base_construction') {
                         bonusStr = `${Math.min(60, lvl * 10)}% → ${Math.min(60, (lvl + 1) * 10)}%`;
                       } else if (upg.id === 'wall_solar') {

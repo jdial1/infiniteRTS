@@ -86,5 +86,41 @@
     "icon": "Flame",
     "iconLibrary": "lucide",
     "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
+  },
+  {
+    "id": "trait_speed_upg",
+    "name": "Kinetic Overdrive",
+    "description": "Further enhances movement speed for hero and units.",
+    "category": "Specialization",
+    "target": "Speed",
+    "effect": "Velocity++",
+    "icon": "Wind",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 150, "stone": 100, "gold": 50 },
+    "requiredTrait": "speed"
+  },
+  {
+    "id": "trait_strength_upg",
+    "name": "Titanium Plating",
+    "description": "Reinforces buildings with superior alloys for more health.",
+    "category": "Specialization",
+    "target": "Strength",
+    "effect": "Durability++",
+    "icon": "Shield",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 150, "stone": 100, "gold": 50 },
+    "requiredTrait": "strength"
+  },
+  {
+    "id": "trait_cost_upg",
+    "name": "Efficient Logistics",
+    "description": "Streamlines supply chains to further reduce costs.",
+    "category": "Specialization",
+    "target": "Cost",
+    "effect": "Economy++",
+    "icon": "TrendingDown",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 150, "stone": 100, "gold": 50 },
+    "requiredTrait": "cost"
   }
 ]
