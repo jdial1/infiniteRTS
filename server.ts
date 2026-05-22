@@ -37,28 +37,58 @@ function generateChunk(cx: number, cy: number) {
   const res: ResourceNode[] = [];
   const zns: MapZone[] = [];
 
-  // Generate 0-1 zone per chunk
-  if (Math.random() > 0.5) {
-    const type = zoneTypes[Math.floor(Math.random() * zoneTypes.length)];
-    let name = type.charAt(0).toUpperCase() + type.slice(1);
+  // 1. Cluster Generation (Rare: 10% chance)
+  if (Math.random() < 0.1) {
+    const typeInt = Math.random();
+    const type: ResourceNode["type"] = typeInt > 0.8 ? "gold" : typeInt > 0.4 ? "stone" : "wood";
+    const zoneType: MapZone["type"] = type === "wood" ? "forest" : type === "stone" ? "mountain" : "desert";
+
+    const centerX = bx + randomInt(200, CHUNK_SIZE - 200);
+    const centerY = by + randomInt(200, CHUNK_SIZE - 200);
+
+    let sumX = 0;
+    let sumY = 0;
+
+    for (let i = 0; i < 4; i++) {
+      const rId = uuidv4();
+      const rx = centerX + randomInt(-100, 100);
+      const ry = centerY + randomInt(-100, 100);
+      const dist = Math.sqrt(rx * rx + ry * ry);
+      const scale = 1 + Math.log10(dist + 1);
+
+      const r: ResourceNode = {
+        id: rId,
+        type,
+        x: rx,
+        y: ry,
+        amount: Math.floor(randomInt(100, 500) * scale * 10)
+      };
+      gameState.resources[rId] = r;
+      res.push(r);
+      sumX += rx;
+      sumY += ry;
+    }
+
+    // Trigger Zone
     const zId = uuidv4();
-    const z = {
+    let nameBase = zoneType.charAt(0).toUpperCase() + zoneType.slice(1);
+    const z: MapZone = {
       id: zId,
-      x: bx + randomInt(0, CHUNK_SIZE),
-      y: by + randomInt(0, CHUNK_SIZE),
-      radius: randomInt(300, 800),
-      type,
-      name: `${name} ${randomInt(1, 100)}`
+      x: sumX / 4,
+      y: sumY / 4,
+      radius: 300,
+      type: zoneType,
+      name: `${nameBase} ${randomInt(1, 100)}`
     };
     gameState.zones[zId] = z;
     zns.push(z);
   }
 
-  // Generate a few resources per chunk (e.g. 5)
+  // 2. Individual Resource Generation (Scatter)
   for (let i = 0; i < 5; i++) {
     const rId = uuidv4();
     const typeInt = Math.random();
-    const type: ResourceNode['type'] = typeInt > 0.8 ? 'gold' : typeInt > 0.4 ? 'stone' : 'wood';
+    const type: ResourceNode["type"] = typeInt > 0.8 ? "gold" : typeInt > 0.4 ? "stone" : "wood";
     const x = bx + randomInt(0, CHUNK_SIZE);
     const y = by + randomInt(0, CHUNK_SIZE);
     const dist = Math.sqrt(x * x + y * y);
