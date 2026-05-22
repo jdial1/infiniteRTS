@@ -340,7 +340,16 @@ export default function App() {
 
   useEffect(() => {
     // Only connect once
-    const s = io('/', { path: '/socket.io' });
+    let userId = localStorage.getItem('render_game_user_id');
+    if (!userId) {
+      userId = crypto.randomUUID();
+      localStorage.setItem('render_game_user_id', userId);
+    }
+
+    const s = io('/', {
+      path: '/socket.io',
+      auth: { userId }
+    });
     setSocket(s);
 
     s.on('connect', () => setConnected(true));
@@ -348,7 +357,7 @@ export default function App() {
 
     s.on('init', (initialState: GameState) => {
       store.state = initialState;
-      const me = initialState.players[s.id as string];
+      const me = initialState.players[userId as string];
       if (me) {
         store.me = me;
         setInventory(me.inventory);
@@ -390,7 +399,7 @@ export default function App() {
     
     s.on('player_updated', (p: Player) => {
       if (store.state) store.state.players[p.id] = p;
-      if (p.id === s.id) {
+      if (p.id === userId) {
         store.me = p;
       }
       setHudTick(h => h + 1); // trigger re-render
@@ -407,7 +416,7 @@ export default function App() {
       if (!store.state) return;
       for (const p of data.players) {
         if (store.state.players[p.id]) {
-          if (p.id !== s.id) {
+          if (p.id !== userId) {
             store.state.players[p.id].x = p.x;
             store.state.players[p.id].y = p.y;
           }
