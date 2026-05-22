@@ -722,11 +722,11 @@ export default function App() {
             }
           }
           if (isNearWall) {
-            speedMultiplier += wallMagneticLvl * 0.25;
+            speedMultiplier += wallMagneticLvl * 0.01;
           }
         }
         const traitSpeedLvl = store.me.upgrades?.trait_speed_upg || 0;
-        const speed = (hasSpeedTrait ? constants.HERO_SPEED_BOOST : constants.HERO_SPEED) * (1 + traitSpeedLvl * 0.10) * speedMultiplier * dt;
+        const speed = (hasSpeedTrait ? constants.HERO_SPEED_BOOST : constants.HERO_SPEED) * (1 + traitSpeedLvl * 0.01) * speedMultiplier * dt;
         let moved = false;
 
 
@@ -1975,11 +1975,13 @@ export default function App() {
                       const modifier = isCostTrait ? 0.75 : 1.0;
                       const buildingData = (buildings as any).miner;
                       const baseConstructionLvl = store.me?.upgrades?.base_construction || 0;
-                      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10));
+                      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01));
 
+                      const numWorkers = Object.values(store.state?.units || {}).filter(u => u.ownerId === store.me?.id && u.type === 'miner').length;
+                      const workerCostMultiplier = Math.pow(2, Math.floor(numWorkers / 10));
                       const minerCost = {
-                        w: Math.floor(buildingData.cost.wood * modifier * discountFactor),
-                        s: Math.floor(buildingData.cost.stone * modifier * discountFactor)
+                        w: Math.floor(buildingData.cost.wood * modifier * discountFactor * workerCostMultiplier),
+                        s: Math.floor(buildingData.cost.stone * modifier * discountFactor * workerCostMultiplier)
                       };
                       const canAffordMiner = inventory.wood >= minerCost.w && inventory.stone >= minerCost.s;
                       const isBtnDisabled = !hasBase || !canAffordMiner;
@@ -2056,7 +2058,7 @@ export default function App() {
                 const cost = bData.cost;
                 const baseConstructionLvl = store.me?.upgrades?.base_construction || 0;
                 const traitCostLvl = store.me?.upgrades?.trait_cost_upg || 0;
-                const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10) - (traitCostLvl * 0.05));
+                const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01) - (traitCostLvl * 0.01));
 
                 return {
                   wood: Math.floor((cost.wood || 0) * modifier * discountFactor),
@@ -2246,28 +2248,28 @@ export default function App() {
 
                       let bonusStr = '';
                       if (upg.id === 'miner_speed') {
-                        bonusStr = `${lvl * 25}% → ${(lvl + 1) * 25}%`;
+                        bonusStr = `${lvl * 2}% → ${(lvl + 1) * 2}%`;
                       } else if (upg.id === 'miner_capacity') {
                         const baseCap = (buildings as any).miner.baseCapacity;
-                        bonusStr = `${baseCap + lvl * 10} → ${baseCap + (lvl + 1) * 10}`;
+                        bonusStr = `${baseCap + lvl * 1} → ${baseCap + (lvl + 1) * 1}`;
                       } else if (upg.id === 'base_tax') {
-                        bonusStr = `+${lvl * 5} → +${(lvl + 1) * 5}`;
+                        bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
                       } else if (upg.id === 'trait_speed_upg') {
-                        bonusStr = `+${lvl * 10}% → +${(lvl + 1) * 10}%`;
+                        bonusStr = `+${lvl * 1}% → +${(lvl + 1) * 1}%`;
                       } else if (upg.id === 'trait_strength_upg') {
-                        bonusStr = `+${lvl * 25}% → +${(lvl + 1) * 25}%`;
+                        bonusStr = `+${lvl * 2}% → +${(lvl + 1) * 2}%`;
                       } else if (upg.id === 'trait_cost_upg') {
-                        bonusStr = `-${lvl * 5}% → -${(lvl + 1) * 5}%`;
+                        bonusStr = `-${lvl * 1}% → -${(lvl + 1) * 1}%`;
                       } else if (upg.id === 'base_construction') {
-                        bonusStr = `${Math.min(60, lvl * 10)}% → ${Math.min(60, (lvl + 1) * 10)}%`;
+                        bonusStr = `${Math.min(60, lvl * 1)}% → ${Math.min(60, (lvl + 1) * 1)}%`;
                       } else if (upg.id === 'wall_solar') {
                         bonusStr = `+${lvl} → +${lvl + 1}`;
                       } else if (upg.id === 'wall_magnetic') {
-                        bonusStr = `${lvl * 15}% → ${(lvl + 1) * 15}%`;
+                        bonusStr = `${lvl * 1}% → ${(lvl + 1) * 1}%`;
                       } else if (upg.id === 'turret_collector') {
-                        bonusStr = `+${lvl * 2} → +${(lvl + 1) * 2}`;
+                        bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
                       } else if (upg.id === 'turret_beam') {
-                        bonusStr = `+${lvl * 5} → +${(lvl + 1) * 5}`;
+                        bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
                       }
 
                       return (
