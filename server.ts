@@ -201,7 +201,7 @@ async function startServer() {
 
       const baseConstructionLvl = player.upgrades?.base_construction || 0;
       const traitCostLvl = player.upgrades?.trait_cost_upg || 0;
-      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10) - (traitCostLvl * 0.05));
+      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01) - (traitCostLvl * 0.01));
 
       const finalCost = {
         wood: Math.floor(cost.wood * costModifier * discountFactor),
@@ -220,7 +220,7 @@ async function startServer() {
 
         const hasStrengthTrait = player.traits.includes('strength');
         const traitStrengthLvl = player.upgrades?.trait_strength_upg || 0;
-        const healthModifier = (hasStrengthTrait ? 1.5 : 1.0) * (1 + traitStrengthLvl * 0.25);
+        const healthModifier = (hasStrengthTrait ? 1.5 : 1.0) * (1 + traitStrengthLvl * 0.02);
 
         const bId = uuidv4();
         const b: Building = {
@@ -249,12 +249,15 @@ async function startServer() {
         
         const baseConstructionLvl = player.upgrades?.base_construction || 0;
         const traitCostLvl = player.upgrades?.trait_cost_upg || 0;
-        const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.10) - (traitCostLvl * 0.05));
+        const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01) - (traitCostLvl * 0.01));
+
+        const numWorkers = Object.values(gameState.units).filter(u => u.ownerId === socket.id && u.type === 'miner').length;
+        const workerCostMultiplier = Math.pow(2, Math.floor(numWorkers / 10));
 
         const finalCost = {
-          wood: Math.floor(baseCost.wood * costModifier * discountFactor),
-          stone: Math.floor(baseCost.stone * costModifier * discountFactor),
-          gold: Math.floor(baseCost.gold * costModifier * discountFactor)
+          wood: Math.floor(baseCost.wood * costModifier * discountFactor * workerCostMultiplier),
+          stone: Math.floor(baseCost.stone * costModifier * discountFactor * workerCostMultiplier),
+          gold: Math.floor(baseCost.gold * costModifier * discountFactor * workerCostMultiplier)
         };
 
         if (player.inventory.wood >= finalCost.wood && 
@@ -279,7 +282,7 @@ async function startServer() {
             y: base.y,
             state: 'idle',
             inventory: { type: null, amount: 0 },
-            capacity: buildingData.baseCapacity + (minerCapacityLvl * 10),
+            capacity: buildingData.baseCapacity + (minerCapacityLvl * 1),
             assignedResource: null
           };
           gameState.units[uId] = u;
@@ -328,7 +331,7 @@ async function startServer() {
 
         // Apply capacity upgrades to existing miners immediately
         if (data.upgradeId === 'miner_capacity') {
-          const newCapacity = (buildings as any).miner.baseCapacity + ((currentLvl + 1) * 10);
+          const newCapacity = (buildings as any).miner.baseCapacity + ((currentLvl + 1) * 1);
           Object.values(gameState.units).forEach(u => {
             if (u.ownerId === player.id && u.type === 'miner') {
               u.capacity = newCapacity;
@@ -389,7 +392,7 @@ async function startServer() {
               }
            }
            const turretBeamLvl = player.upgrades?.turret_beam || 0;
-           const extraGather = turretBeamLvl * 5;
+           const extraGather = turretBeamLvl * 1;
            const finalAmount = Math.round((10 + extraGather) * bonus);
            resource.amount -= 10;
            player.inventory[resource.type] += finalAmount;
@@ -428,9 +431,9 @@ async function startServer() {
         if (baseTaxLvl > 0) {
           const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === p.id && b.type === 'base');
           if (hasBase) {
-            p.inventory.wood += baseTaxLvl * 5;
-            p.inventory.stone += baseTaxLvl * 5;
-            p.inventory.gold += baseTaxLvl * 2;
+            p.inventory.wood += baseTaxLvl * 1;
+            p.inventory.stone += baseTaxLvl * 1;
+            p.inventory.gold += baseTaxLvl * 1;
             updated = true;
           }
         }
@@ -461,8 +464,8 @@ async function startServer() {
         if (turretCollectorLvl > 0) {
           const turretCount = Object.values(gameState.buildings).filter(b => b.ownerId === p.id && b.type === 'turret').length;
           if (turretCount > 0) {
-            p.inventory.wood += turretCollectorLvl * turretCount * 2;
-            p.inventory.stone += turretCollectorLvl * turretCount * 2;
+            p.inventory.wood += turretCollectorLvl * turretCount * 1;
+            p.inventory.stone += turretCollectorLvl * turretCount * 1;
             p.inventory.gold += turretCollectorLvl * turretCount * 1;
             updated = true;
           }
@@ -532,7 +535,7 @@ async function startServer() {
          const hasSpeedTrait = p.traits.includes('speed');
          const minerSpeedLvl = p.upgrades?.miner_speed || 0;
          const traitSpeedLvl = p.upgrades?.trait_speed_upg || 0;
-         const MINER_SPEED = ((hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 25)) * (1 + traitSpeedLvl * 0.10);
+         const MINER_SPEED = ((hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 2)) * (1 + traitSpeedLvl * 0.01);
          
          if (u.state === 'idle') {
             if (!u.assignedResource) return;
