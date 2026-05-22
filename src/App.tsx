@@ -15,6 +15,15 @@ const getIconComponent = (name: string, library: string) => {
   return null;
 };
 
+const getMascot = (traits: string[]) => {
+  if (!traits || traits.length < 2) return null;
+  const sorted = [...traits].sort();
+  if (sorted.includes('speed') && sorted.includes('strength')) return icons.mascots.speed_strength;
+  if (sorted.includes('speed') && sorted.includes('cost')) return icons.mascots.speed_cost;
+  if (sorted.includes('strength') && sorted.includes('cost')) return icons.mascots.strength_cost;
+  return null;
+};
+
 const DynamicIcon = ({ name, library, ...props }: { name: string; library: string; [key: string]: any }) => {
   const Icon = getIconComponent(name, library);
   return Icon ? <Icon {...props} /> : null;
@@ -2541,6 +2550,21 @@ export default function App() {
                           }`}>
                             #{rank + 1}
                           </span>
+
+                          {/* Mascot Icon */}
+                          {(() => {
+                            const mascot = getMascot(player.traits);
+                            if (!mascot) return null;
+                            return (
+                              <div
+                                className="w-8 h-8 rounded bg-black/40 border flex items-center justify-center shadow-inner shrink-0"
+                                style={{ borderColor: mascot.color + '40' }}
+                                title={mascot.label}
+                              >
+                                <DynamicIcon name={mascot.name} library={mascot.library} size={20} style={{ color: mascot.color }} />
+                              </div>
+                            );
+                          })()}
                           
                           <div className="relative">
                             <img 
@@ -2558,7 +2582,10 @@ export default function App() {
                           
                           <div className="flex flex-col">
                             <span className="font-bold text-xs flex items-center gap-1 text-white">
-                              {player.name}
+                              {(() => {
+                                const mascot = getMascot(player.traits);
+                                return mascot ? `${mascot.label} - ${player.name}` : player.name;
+                              })()}
                               {isMe && <span className="text-[8px] bg-indigo-500/30 text-indigo-300 font-extrabold px-1 rounded">YOU</span>}
                             </span>
                             <span className="text-[9px] text-gray-450 font-mono">
@@ -2625,6 +2652,22 @@ export default function App() {
               <h2 className="text-2xl font-display tracking-widest uppercase font-bold mb-2 text-cyan-400">Select Doctrine</h2>
               <p className="text-sm font-sans font-bold text-zinc-400 uppercase">Authorize <strong className="text-white">2 protocols</strong> for your command.</p>
             </div>
+
+            {selectedTraits.length === 2 && (() => {
+              const mascot = getMascot(selectedTraits);
+              if (!mascot) return null;
+              return (
+                <div className="mb-6 p-4 rounded bg-zinc-900/50 border border-zinc-800 flex items-center gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                  <div className="p-3 rounded-full bg-black border-2 shadow-[0_0_15px_rgba(0,0,0,0.5)]" style={{ borderColor: mascot.color }}>
+                    <DynamicIcon name={mascot.name} library={mascot.library} size={32} style={{ color: mascot.color }} />
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.2em] font-black text-zinc-500 mb-0.5">Your Identity</div>
+                    <div className="text-xl font-display uppercase tracking-widest font-black text-white">{mascot.label}</div>
+                  </div>
+                </div>
+              );
+            })()}
             
             <div className="flex flex-col gap-2">
                <button 
