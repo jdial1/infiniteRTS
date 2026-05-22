@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+
 import { io, Socket } from 'socket.io-client';
 import { GameState, Player, ResourceNode, Building, MapZone } from './types';
 import * as GiIcons from 'react-icons/gi';
@@ -109,6 +110,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
+  const [isOffline, setIsOffline] = useState(!window.navigator.onLine);
   const [inventory, setInventory] = useState({ wood: 0, stone: 0, gold: 0 });
   
   // Camera state
@@ -127,6 +129,17 @@ export default function App() {
   // UI state
   const [buildMode, setBuildMode] = useState<Building['type'] | null>(null);
   const [combatLogs, setCombatLogs] = useState<{ id: string; time: number; message: string; targetX: number; targetY: number }[]>([]);
+
+  useEffect(() => {
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   useEffect(() => {
     // Clear old combat logs periodically
@@ -2710,7 +2723,27 @@ export default function App() {
         </div>
       )}
 
-      {/* Edge Zoom Scale Indicator */}
+      {isOffline && (
+        <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-xl p-4">
+          <div className="metallic-panel p-8 max-w-sm w-full border-t-4 border-red-600 text-center shadow-[0_0_100px_rgba(204,0,0,0.3)]">
+             <div className="mb-6 flex justify-center">
+                <div className="p-4 rounded-full bg-red-950/30 border-2 border-red-600 animate-pulse">
+                   <GiIcons.GiTrophyCup size={64} color="#ef4444" />
+                </div>
+             </div>
+             <h2 className="text-3xl font-display tracking-widest uppercase font-black text-red-600 mb-2">Signal Lost</h2>
+             <p className="text-zinc-400 font-sans font-bold uppercase text-xs tracking-widest mb-8 leading-relaxed">
+               The Motherland demands a connection.<br/>Commisariat reports you are currently <span className="text-red-500">OFFLINE</span>.
+             </p>
+             <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden mb-4">
+                <div className="h-full bg-red-600 w-1/3 animate-[loading_2s_ease-in-out_infinite]" />
+             </div>
+             <p className="text-[10px] text-zinc-500 font-mono uppercase">Re-establishing connection protocols...</p>
+          </div>
+        </div>
+      )}
+
+            {/* Edge Zoom Scale Indicator */}
       <div 
         id="edge-zoom-scale"
         className={`absolute right-4 top-1/2 -translate-y-1/2 flex flex-col items-center metallic-panel-inset px-2 py-5 shadow-[0_0_15px_rgba(0,0,0,1)] transition-all duration-300 z-30 pointer-events-none select-none ${

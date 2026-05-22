@@ -1,0 +1,9 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="black"/>
+  <!-- Ornate Star with inner lines -->
+  <path d="M256 40L320 185H475L350 275L395 425L256 335L117 425L162 275L37 185H192L256 40Z" fill="#CC0000" stroke="#FFD700" stroke-width="8"/>
+  <path d="M256 40L256 335M320 185L162 275M475 185L117 425M350 275L395 425" stroke="#880000" stroke-width="2" opacity="0.5"/>
+  <path d="M256 335L192 185M256 335L320 185M256 335L350 275M256 335L162 275" stroke="#880000" stroke-width="2" opacity="0.5"/>
+  <!-- Circular wreath-like element -->
+  <circle cx="256" cy="256" r="230" stroke="#FFD700" stroke-width="4" stroke-dasharray="10 5" opacity="0.4"/>
+</svg>
