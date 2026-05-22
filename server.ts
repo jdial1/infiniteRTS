@@ -116,33 +116,65 @@ async function startServer() {
     cors: { origin: '*' } // Be permissive for dev
   });
 
+  // Track socket to user mapping
+  const socketToUser = new Map<string, string>();
+  const userToSocket = new Map<string, string>();
+
   // API Route
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
   });
 
   io.on('connection', (socket) => {
-    console.log(`Player connected: ${socket.id}`);
+    const userId = socket.handshake.auth.userId;
+    if (!userId) {
+      console.error('Connection rejected: No userId provided');
+      socket.disconnect();
+      return;
+    }
 
-    // Create player
-    const initialUpgrades: Record<string, number> = {};
-    upgrades.forEach(u => {
-      initialUpgrades[u.id] = 0;
-    });
+    console.log(`Player connected: ${socket.id} (User: ${userId})`);
 
-    gameState.players[socket.id] = {
-      id: socket.id,
-      name: `Player ${socket.id.substring(0, 4)}`,
-      x: randomInt(-500, 500),
-      y: randomInt(-500, 500),
-      color: `hsl(${Math.random() * 360}, 80%, 60%)`,
-      inventory: { wood: 300, stone: 200, gold: 100 }, // starting resources
-      score: 0,
-      traits: [],
-      upgrades: initialUpgrades
-    };
+    // Handle session takeover
+    const existingSocketId = userToSocket.get(userId);
+    if (existingSocketId && existingSocketId !== socket.id) {
+      const existingSocket = io.sockets.sockets.get(existingSocketId);
+      if (existingSocket) {
+        console.log(`Taking over session for User: ${userId}. Disconnecting old socket: ${existingSocketId}`);
+        existingSocket.disconnect();
+      }
+    }
 
-    // Send initial state to the new player (without full resources/zones to save bandwidth/client memory)
+    socketToUser.set(socket.id, userId);
+    userToSocket.set(userId, socket.id);
+
+    // Create or retrieve player
+    if (!gameState.players[userId]) {
+      const initialUpgrades: Record<string, number> = {};
+      upgrades.forEach(u => {
+        initialUpgrades[u.id] = 0;
+      });
+
+      gameState.players[userId] = {
+        id: userId,
+        name: `Player ${userId.substring(0, 4)}`,
+        x: randomInt(-500, 500),
+        y: randomInt(-500, 500),
+        color: `hsl(${Math.random() * 360}, 80%, 60%)`,
+        inventory: { wood: 300, stone: 200, gold: 100 }, // starting resources
+        score: 0,
+        traits: [],
+        upgrades: initialUpgrades
+      };
+      // Broadcast to others ONLY if new player
+      socket.broadcast.emit('player_joined', gameState.players[userId]);
+    } else {
+      console.log(`Player reconnected: ${userId}`);
+    }
+
+    const player = gameState.players[userId];
+
+    // Send initial state to the player
     const initState = {
       players: gameState.players,
       buildings: gameState.buildings,
@@ -151,12 +183,9 @@ async function startServer() {
       resources: {}
     };
     socket.emit('init', initState);
-    
-    // Broadcast to others
-    socket.broadcast.emit('player_joined', gameState.players[socket.id]);
 
     socket.on('select_traits', (traits: ('speed' | 'strength' | 'cost')[]) => {
-      const player = gameState.players[socket.id];
+      const player = gameState.players[userId];
       if (player && player.traits.length === 0 && traits.length === 2) {
         player.traits = traits;
         io.emit('player_updated', player);
@@ -164,7 +193,6 @@ async function startServer() {
     });
 
     socket.on('request_chunks', (chunkKeys: string[]) => {
-      console.log('request_chunks', chunkKeys);
       const result: { resources: Record<string, ResourceNode>, zones: Record<string, MapZone> } = { resources: {}, zones: {} };
       
       for (const key of chunkKeys) {
@@ -192,27 +220,25 @@ async function startServer() {
     });
 
     socket.on('move', (data: { x: number; y: number }) => {
-      const player = gameState.players[socket.id];
+      const player = gameState.players[userId];
       if (player) {
          player.x = data.x;
          player.y = data.y;
-         // We won't broadcast every single move purely to all at 60fps, 
-         // but for a simple demo it's fine. We'll broadcast at a tick rate.
       }
     });
 
     socket.on('build', (data: { type: Building['type'], x: number, y: number }) => {
-      const player = gameState.players[socket.id];
+      const player = gameState.players[userId];
       if (!player) return;
 
       if (data.type === 'miner' as any) return;
 
       if (data.type === 'base') {
-        const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === socket.id && b.type === 'base');
+        const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === userId && b.type === 'base');
         if (hasBase) return;
       } else {
         // Must have a base and be within range (BUILD_RANGE units) of it
-        const playerBase = Object.values(gameState.buildings).find(b => b.ownerId === socket.id && b.type === 'base');
+        const playerBase = Object.values(gameState.buildings).find(b => b.ownerId === userId && b.type === 'base');
         if (!playerBase) return;
 
         const dx = data.x - playerBase.x;
@@ -258,7 +284,7 @@ async function startServer() {
           type: data.type,
           x: data.x,
           y: data.y,
-          ownerId: socket.id,
+          ownerId: userId,
           health: Math.floor(buildingData.health * healthModifier)
         };
         gameState.buildings[bId] = b;
@@ -323,7 +349,7 @@ async function startServer() {
     });
 
     socket.on('purchase_upgrade', (data: { upgradeId: string }) => {
-      const player = gameState.players[socket.id];
+      const player = gameState.players[userId];
       if (!player) return;
 
       const upgradeMetadata = upgrades.find(u => u.id === data.upgradeId);
@@ -376,7 +402,7 @@ async function startServer() {
     });
 
     socket.on('assign_miner', (data: { resource: 'wood' | 'stone' | 'gold', delta: number }) => {
-      const playerMiners = Object.values(gameState.units).filter(u => u.ownerId === socket.id && u.type === 'miner');
+      const playerMiners = Object.values(gameState.units).filter(u => u.ownerId === userId && u.type === 'miner');
       if (data.delta === 1) {
         const unassigned = playerMiners.find(u => !u.assignedResource);
         if (unassigned) {
@@ -398,7 +424,7 @@ async function startServer() {
     });
     
     socket.on('gather', (resourceId: string) => {
-      const player = gameState.players[socket.id];
+      const player = gameState.players[userId];
       const resource = gameState.resources[resourceId];
       if (player && resource && resource.amount > 0) {
          const dx = player.x - resource.x;
@@ -438,9 +464,12 @@ async function startServer() {
     });
 
     socket.on('disconnect', () => {
-      console.log(`Player disconnected: ${socket.id}`);
-      delete gameState.players[socket.id];
-      io.emit('player_left', socket.id);
+      console.log(`Player disconnected: ${socket.id} (User: ${userId})`);
+      socketToUser.delete(socket.id);
+      if (userToSocket.get(userId) === socket.id) {
+        userToSocket.delete(userId);
+      }
+      io.emit('player_left', userId);
     });
   });
 
@@ -480,7 +509,8 @@ async function startServer() {
         }
 
         if (updated) {
-          io.to(p.id).emit('inventory_updated', p.inventory);
+          const sId = userToSocket.get(p.id);
+          if (sId) io.to(sId).emit('inventory_updated', p.inventory);
         }
       });
     }
@@ -502,7 +532,8 @@ async function startServer() {
         }
 
         if (updated) {
-          io.to(p.id).emit('inventory_updated', p.inventory);
+          const sId = userToSocket.get(p.id);
+          if (sId) io.to(sId).emit('inventory_updated', p.inventory);
         }
       });
     }
@@ -675,7 +706,8 @@ async function startServer() {
     }
     
     for (const pId in inventoryUpdates) {
-       io.to(pId).emit('inventory_updated', inventoryUpdates[pId]);
+       const sId = userToSocket.get(pId);
+       if (sId) io.to(sId).emit('inventory_updated', inventoryUpdates[pId]);
     }
     
   }, 1000 / TICK_RATE);
