@@ -48,6 +48,7 @@ const baseIconWhite = createIconImage(getIconComponent(icons.buildings.base.name
 const wallIconWhite = createIconImage(getIconComponent(icons.buildings.wall.name, icons.buildings.wall.library), icons.buildings.wall.color);
 const turretIconWhite = createIconImage(getIconComponent(icons.buildings.turret.name, icons.buildings.turret.library), icons.buildings.turret.color);
 const minerIconWhite = createIconImage(getIconComponent(icons.buildings.miner.name, icons.buildings.miner.library), icons.buildings.miner.color);
+const outpostIconWhite = createIconImage(getIconComponent(icons.buildings.outpost.name, icons.buildings.outpost.library), icons.buildings.outpost.color);
 
 let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
 function getRedHatchCanvas(): HTMLCanvasElement {
@@ -1083,6 +1084,8 @@ export default function App() {
             ctx.roundRect ? ctx.roundRect(b.x - size, b.y - size, size * 2, size * 2, 3) : ctx.rect(b.x - size, b.y - size, size * 2, size * 2);
           } else if (b.type === 'turret') {
             ctx.arc(b.x, b.y, size, 0, Math.PI * 2);
+          } else if (b.type === 'outpost') {
+            ctx.roundRect ? ctx.roundRect(b.x - size, b.y - size, size * 2, size * 2, 10) : ctx.rect(b.x - size, b.y - size, size * 2, size * 2);
           }
           ctx.fill();
           ctx.strokeStyle = '#000000';
@@ -1094,10 +1097,61 @@ export default function App() {
           if (b.type === 'base') img = baseIconWhite;
           if (b.type === 'wall') img = wallIconWhite;
           if (b.type === 'turret') img = turretIconWhite;
+          if (b.type === 'outpost') img = outpostIconWhite;
 
           if (img && img.complete && img.naturalWidth > 0) {
-            const iconSize = b.type === 'base' ? 15 : (b.type === 'wall' ? 8 : 11);
+            const iconSize = b.type === 'base' ? 15 : (b.type === 'wall' ? 8 : (b.type === 'outpost' ? 15 : 11));
             ctx.drawImage(img, b.x - iconSize, b.y - iconSize, iconSize * 2, iconSize * 2);
+          // Draw capture ring for outposts
+          if (b.type === 'outpost') {
+            const captureProgress = b.captureProgress || 0;
+            const isConflict = b.isConflict;
+            const capturingPlayerColor = b.capturingPlayerId ? (store.state.players[b.capturingPlayerId]?.color || '#ffffff') : '#ffffff';
+
+            // Flashing capture ring
+            ctx.save();
+            const ringRadius = size + 8;
+            const barWidth = 4;
+            const flash = Math.sin(Date.now() / 200) * 0.5 + 0.5;
+
+            // Background ring
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(15, 23, 42, 0.4)';
+            ctx.lineWidth = barWidth;
+            ctx.stroke();
+
+            if (isConflict) {
+              ctx.strokeStyle = '#ef4444';
+              ctx.lineWidth = barWidth + (flash * 2);
+              ctx.beginPath();
+              ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);
+              ctx.stroke();
+
+              ctx.font = 'bold 12px Inter';
+              ctx.fillStyle = '#ef4444';
+              ctx.textAlign = 'center';
+              ctx.fillText('CONFLICT', b.x, b.y - size - 15);
+            } else if (captureProgress > 0 && captureProgress < 100) {
+              ctx.beginPath();
+              const startAngle = -Math.PI / 2;
+              const endAngle = startAngle + (captureProgress / 100) * (Math.PI * 2);
+              ctx.arc(b.x, b.y, ringRadius, startAngle, endAngle);
+              ctx.strokeStyle = capturingPlayerColor;
+              ctx.lineWidth = barWidth;
+              ctx.lineCap = 'round';
+              ctx.stroke();
+
+              if (flash > 0.5) {
+                ctx.globalAlpha = 0.3;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
+          }
+
           }
         }
 
@@ -1569,7 +1623,7 @@ export default function App() {
               mctx.arc(b.x, b.y, bSize, 0, Math.PI * 2);
               mctx.fill();
               mctx.stroke();
-            } else if (b.type === 'wall') {
+            } else if (b.type === 'wall' || b.type === 'outpost') {
               mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, bData.minimapCornerRadius) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
               mctx.fill();
               mctx.stroke();

@@ -25,10 +25,13 @@ export interface Player {
 export interface Building {
   id: string;
   ownerId: string;
-  type: 'base' | 'wall' | 'turret';
+  type: 'base' | 'wall' | 'turret' | 'outpost';
   x: number;
   y: number;
   health: number;
+  captureProgress?: number;
+  capturingPlayerId?: string | null;
+  isConflict?: boolean;
 }
 
 export interface Unit {
