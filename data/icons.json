@@ -8,7 +8,8 @@
     "base": { "library": "gi", "name": "GiVillage", "color": "#ffffff" },
     "wall": { "library": "gi", "name": "GiBrickWall", "color": "#ffffff" },
     "turret": { "library": "gi", "name": "GiStoneTower", "color": "#ffffff" },
-    "miner": { "library": "gi", "name": "GiMining", "color": "#ffffff" }
+    "miner": { "library": "gi", "name": "GiMining", "color": "#ffffff" },
+    "outpost": { "library": "gi", "name": "GiCastle", "color": "#ffffff" }
   },
   "ui": {
     "help": { "library": "lucide", "name": "HelpCircle" },

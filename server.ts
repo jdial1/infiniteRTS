@@ -26,6 +26,77 @@ const generatedChunks = new Set<string>();
 const chunkData = new Map<string, { resources: ResourceNode[], zones: MapZone[] }>();
 const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
 
+
+
+function isPointInTerritory(px: number, py: number, userId: string, gameState: any, constants: any) {
+  // 1. Check Base (radius 450)
+  const playerBase = Object.values(gameState.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+  if (playerBase) {
+    const dx = px - playerBase.x;
+    const dy = py - playerBase.y;
+    if (Math.sqrt(dx * dx + dy * dy) <= constants.BUILD_RANGE) return true;
+  }
+
+  // 2. Check Outposts
+  const ownedOutposts = Object.values(gameState.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
+  const OUTPOST_BUILD_RADIUS = 400;
+  const OUTPOST_SPACING = 600;
+
+  for (const o of ownedOutposts) {
+    const dx = px - o.x;
+    const dy = py - o.y;
+    if (Math.sqrt(dx * dx + dy * dy) <= OUTPOST_BUILD_RADIUS) return true;
+  }
+
+  // 3. Check Bridges (1D)
+  for (let i = 0; i < ownedOutposts.length; i++) {
+    for (let j = i + 1; j < ownedOutposts.length; j++) {
+      const a = ownedOutposts[i];
+      const b = ownedOutposts[j];
+
+      const dx = Math.abs(a.x - b.x);
+      const dy = Math.abs(a.y - b.y);
+
+      if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
+        // Adjacent
+        const minX = Math.min(a.x, b.x);
+        const maxX = Math.max(a.x, b.x);
+        const minY = Math.min(a.y, b.y);
+        const maxY = Math.max(a.y, b.y);
+
+        if (dx > dy) { // Horizontal bridge
+          if (px >= minX && px <= maxX && Math.abs(py - a.y) <= 200) return true;
+        } else { // Vertical bridge
+          if (py >= minY && py <= maxY && Math.abs(px - a.x) <= 200) return true;
+        }
+      }
+    }
+  }
+
+  // 4. Check 2D Squares
+  for (const o of ownedOutposts) {
+    const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
+    const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+    const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+
+    if (hasTR && hasBL && hasBR) {
+      if (px >= o.x && px <= o.x + OUTPOST_SPACING && py >= o.y && py <= o.y + OUTPOST_SPACING) return true;
+    }
+  }
+
+  return false;
+}
+
+async function startServer() {
+  const app = express();
+  const PORT = parseInt(process.env.PORT || '3000', 10);
+  const httpServer = createServer(app);
+
+  const io = new Server(httpServer, {
+    cors: { origin: '*' } // Be permissive for dev
+  });
+
+
 function generateChunk(cx: number, cy: number) {
   const key = `${cx},${cy}`;
   if (generatedChunks.has(key)) return;
@@ -35,6 +106,27 @@ function generateChunk(cx: number, cy: number) {
   const by = cy * CHUNK_SIZE;
   
   const res: ResourceNode[] = [];
+  // 0. Outpost Generation (Every 600 units)
+  const OUTPOST_SPACING = 600;
+  for (let x = Math.ceil(bx / OUTPOST_SPACING) * OUTPOST_SPACING; x < bx + CHUNK_SIZE; x += OUTPOST_SPACING) {
+    for (let y = Math.ceil(by / OUTPOST_SPACING) * OUTPOST_SPACING; y < by + CHUNK_SIZE; y += OUTPOST_SPACING) {
+      const oId = `outpost-${x}-${y}`;
+      if (!gameState.buildings[oId]) {
+        gameState.buildings[oId] = {
+          id: oId,
+          ownerId: 'neutral',
+          type: 'outpost',
+          x,
+          y,
+          health: 500,
+          captureProgress: 0,
+          capturingPlayerId: null,
+          isConflict: false
+        };
+        io.emit('building_created', gameState.buildings[oId]);
+      }
+    }
+  }
   const zns: MapZone[] = [];
 
   // 1. Cluster Generation (Rare: 10% chance)
@@ -106,15 +198,6 @@ function generateChunk(cx: number, cy: number) {
   
   chunkData.set(key, { resources: res, zones: zns });
 }
-
-async function startServer() {
-  const app = express();
-  const PORT = parseInt(process.env.PORT || '3000', 10);
-  const httpServer = createServer(app);
-  
-  const io = new Server(httpServer, {
-    cors: { origin: '*' } // Be permissive for dev
-  });
 
   // Track socket to user mapping
   const socketToUser = new Map<string, string>();
@@ -237,14 +320,7 @@ async function startServer() {
         const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === userId && b.type === 'base');
         if (hasBase) return;
       } else {
-        // Must have a base and be within range (BUILD_RANGE units) of it
-        const playerBase = Object.values(gameState.buildings).find(b => b.ownerId === userId && b.type === 'base');
-        if (!playerBase) return;
-
-        const dx = data.x - playerBase.x;
-        const dy = data.y - playerBase.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > constants.BUILD_RANGE) return;
+        if (!isPointInTerritory(data.x, data.y, userId, gameState, constants)) return;
       }
 
       const buildingData = (buildings as any)[data.type];
@@ -549,7 +625,7 @@ async function startServer() {
           let target = null;
           for (let eId in gameState.buildings) {
             const eb = gameState.buildings[eId];
-            if (eb.ownerId !== b.ownerId) {
+            if (eb.ownerId !== b.ownerId && eb.type !== 'outpost') {
               const dist = Math.sqrt(Math.pow(eb.x - b.x, 2) + Math.pow(eb.y - b.y, 2));
               if (dist <= closestDist) {
                 closestDist = dist;
@@ -574,6 +650,61 @@ async function startServer() {
         }
       });
     }
+
+
+    // Outpost capture logic
+    Object.values(gameState.buildings).forEach(b => {
+      if (b.type === 'outpost') {
+        const playersNear = Object.values(gameState.players).filter(p => {
+          const dx = p.x - b.x;
+          const dy = p.y - b.y;
+          return Math.sqrt(dx*dx + dy*dy) <= 150; // Capture radius
+        });
+
+        const uniqueTeams = new Set(playersNear.map(p => p.id));
+
+        const oldProgress = b.captureProgress || 0;
+        const oldOwner = b.ownerId;
+        const oldCapturer = b.capturingPlayerId;
+        const oldConflict = b.isConflict;
+
+        if (playersNear.length === 0) {
+          b.isConflict = false;
+          b.capturingPlayerId = null;
+          // Slow decay
+          if (b.captureProgress && b.captureProgress > 0 && b.ownerId === 'neutral') {
+            b.captureProgress = Math.max(0, b.captureProgress - 0.5);
+          } else if (b.ownerId !== 'neutral' && b.captureProgress && b.captureProgress < 100) {
+             b.captureProgress = Math.min(100, b.captureProgress + 0.5);
+          }
+        } else if (uniqueTeams.size > 1) {
+          b.isConflict = true;
+        } else {
+          b.isConflict = false;
+          const capturerId = playersNear[0].id;
+          b.capturingPlayerId = capturerId;
+
+          if (b.ownerId === 'neutral') {
+            b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
+            if (b.captureProgress === 100) {
+              b.ownerId = capturerId;
+            }
+          } else if (b.ownerId === capturerId) {
+            b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
+          } else {
+            // Neutralize enemy outpost
+            b.captureProgress = Math.max(0, (b.captureProgress || 0) - 1);
+            if (b.captureProgress === 0) {
+              b.ownerId = 'neutral';
+            }
+          }
+        }
+
+        if (b.captureProgress !== oldProgress || b.ownerId !== oldOwner || b.capturingPlayerId !== oldCapturer || b.isConflict !== oldConflict) {
+          io.emit('building_updated', b);
+        }
+      }
+    });
 
     if (combatEvents.length > 0) {
       io.emit('combat_events', combatEvents);

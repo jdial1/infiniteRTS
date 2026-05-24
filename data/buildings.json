@@ -32,5 +32,14 @@
     "displayName": "Worker",
     "baseCapacity": 20,
     "minimapSize": 11
+  },
+  "outpost": {
+    "cost": { "wood": 0, "stone": 0, "gold": 0 },
+    "health": 500,
+    "size": 20,
+    "icon": "GiCastle",
+    "displayName": "Neutral Outpost",
+    "minimapSize": 60,
+    "minimapCornerRadius": 10
   }
 }
