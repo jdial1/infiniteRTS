@@ -53,6 +53,66 @@ const outpostIconWhite = createIconImage(getIconComponent(icons.buildings.outpos
 let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
 
 const hatchCanvasCache: Record<string, HTMLCanvasElement> = {};
+type Point = { x: number; y: number };
+
+function getVoronoiCell(site: Point, allSites: Point[], bounds: { minX: number; minY: number; maxX: number; maxY: number }): Point[] {
+  let cell = [
+    { x: bounds.minX, y: bounds.minY },
+    { x: bounds.maxX, y: bounds.minY },
+    { x: bounds.maxX, y: bounds.maxY },
+    { x: bounds.minX, y: bounds.maxY }
+  ];
+
+  for (const other of allSites) {
+    if (other.x === site.x && other.y === site.y) continue;
+
+    // Perpendicular bisector between site and other
+    const midX = (site.x + other.x) / 2;
+    const midY = (site.y + other.y) / 2;
+    const dx = other.x - site.x;
+    const dy = other.y - site.y;
+
+    // Normal vector pointing towards 'other'
+    // Half-plane is defined by: (p - mid) . d <= 0  (points closer to 'site')
+    // dx*(px - midX) + dy*(py - midY) <= 0
+
+    const nextCell: Point[] = [];
+    for (let i = 0; i < cell.length; i++) {
+      const p1 = cell[i];
+      const p2 = cell[(i + 1) % cell.length];
+
+      const in1 = dx * (p1.x - midX) + dy * (p1.y - midY) <= 0.001;
+      const in2 = dx * (p2.x - midX) + dy * (p2.y - midY) <= 0.001;
+
+      if (in1 && in2) {
+        nextCell.push(p2);
+      } else if (in1 && !in2) {
+        // Intersection
+        nextCell.push(intersect(p1, p2, midX, midY, dx, dy));
+      } else if (!in1 && in2) {
+        // Intersection and then p2
+        nextCell.push(intersect(p1, p2, midX, midY, dx, dy));
+        nextCell.push(p2);
+      }
+    }
+    cell = nextCell;
+    if (cell.length === 0) break;
+  }
+  return cell;
+}
+
+function intersect(p1: Point, p2: Point, midX: number, midY: number, dx: number, dy: number): Point {
+  // Line 1: p1 + t(p2 - p1)
+  // Line 2 (half-plane boundary): (p - mid) . d = 0
+  // (p1.x + t(p2.x - p1.x) - midX) * dx + (p1.y + t(p2.y - p1.y) - midY) * dy = 0
+  const v1x = p2.x - p1.x;
+  const v1y = p2.y - p1.y;
+  const denom = (dx * v1x + dy * v1y);
+  if (Math.abs(denom) < 0.0001) return p1;
+  const t = (dx * (midX - p1.x) + dy * (midY - p1.y)) / denom;
+  return { x: p1.x + t * v1x, y: p1.y + t * v1y };
+}
+
 function getHatchCanvas(color: string): HTMLCanvasElement {
   if (!hatchCanvasCache[color]) {
     const pCanvas = document.createElement('canvas');
@@ -197,6 +257,7 @@ export default function App() {
   
   // Camera state
   const camera = useRef({ x: 0, y: 0, zoom: 1 });
+  const territoryCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const mouse = useRef({ x: 0, y: 0, screenX: 0, screenY: 0, isDown: false });
   const coordsRef = useRef<HTMLDivElement>(null);
 
@@ -970,62 +1031,155 @@ export default function App() {
         ctx.translate(canvas.width / 2, canvas.height / 2);
         ctx.scale(camera.current.zoom, camera.current.zoom);
         ctx.translate(-camera.current.x, -camera.current.y);
+        const allSites = Object.values(store.state.buildings)
+          .filter((b: any) => b.type === 'base' || b.type === 'outpost')
+          .map((b: any) => ({
+            x: b.x,
+            y: b.y,
+            ownerId: b.ownerId,
+            radius: b.type === 'base' ? constants.BUILD_RANGE : 400
+          }));
+
+        const viewDistVoronoi = 2000 / camera.current.zoom;
+        const voronoiBounds = {
+          minX: camera.current.x - viewDistVoronoi,
+          minY: camera.current.y - viewDistVoronoi,
+          maxX: camera.current.x + viewDistVoronoi,
+          maxY: camera.current.y + viewDistVoronoi
+        };
+
         const drawTerritory = (userId: string, ctx: CanvasRenderingContext2D, color: string) => {
+          const mySites = allSites.filter(s => s.ownerId === userId);
+          if (mySites.length === 0) return;
+
           const ownedOutposts = Object.values(store.state.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
           const playerBase = Object.values(store.state.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
           const OUTPOST_BUILD_RADIUS = 400;
           const OUTPOST_SPACING = 600;
 
-          ctx.save();
-          const pattern = ctx.createPattern(getHatchCanvas(color), 'repeat');
-          if (pattern) {
-            ctx.fillStyle = pattern;
-            ctx.globalAlpha = 0.2;
-
-            ctx.beginPath();
-            // 1. Circles around outposts
-            ownedOutposts.forEach(o => {
-              ctx.moveTo(o.x + OUTPOST_BUILD_RADIUS, o.y);
-              ctx.arc(o.x, o.y, OUTPOST_BUILD_RADIUS, 0, Math.PI * 2);
-            });
-            // 2. Circle around base
-            if (playerBase) {
-              ctx.moveTo(playerBase.x + constants.BUILD_RANGE, playerBase.y);
-              ctx.arc(playerBase.x, playerBase.y, constants.BUILD_RANGE, 0, Math.PI * 2);
+          const path = new Path2D();
+          ownedOutposts.forEach(o => {
+            path.moveTo(o.x + OUTPOST_BUILD_RADIUS, o.y);
+            path.arc(o.x, o.y, OUTPOST_BUILD_RADIUS, 0, Math.PI * 2);
+          });
+          if (playerBase) {
+            path.moveTo(playerBase.x + constants.BUILD_RANGE, playerBase.y);
+            path.arc(playerBase.x, playerBase.y, constants.BUILD_RANGE, 0, Math.PI * 2);
+          }
+          for (let i = 0; i < ownedOutposts.length; i++) {
+            for (let j = i + 1; j < ownedOutposts.length; j++) {
+              const a = ownedOutposts[i], b = ownedOutposts[j];
+              const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+              if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
+                const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
+                const maxX = Math.max(a.x, b.x), maxY = Math.max(a.y, b.y);
+                if (dx > dy) path.rect(minX, a.y - 200, maxX - minX, 400);
+                else path.rect(a.x - 200, minY, 400, maxY - minY);
+              }
             }
-            // 3. Bridges
-            for (let i = 0; i < ownedOutposts.length; i++) {
-              for (let j = i + 1; j < ownedOutposts.length; j++) {
-                const a = ownedOutposts[i], b = ownedOutposts[j];
-                const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
-                if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
-                  const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
-                  const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
-                  if (dx > dy) ctx.rect(minX, a.y - 200, maxX - minX, 400);
-                  else ctx.rect(a.x - 200, minY, 400, maxY - minY);
+          }
+          ownedOutposts.forEach(o => {
+            const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
+            const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+            const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+            if (hasTR && hasBL && hasBR) path.rect(o.x, o.y, OUTPOST_SPACING, OUTPOST_SPACING);
+          });
+
+          const clipPath = new Path2D();
+          const conflictingEdgesPath = new Path2D();
+          const otherSites = allSites.filter(s => s.ownerId !== userId);
+
+          mySites.forEach(site => {
+            const cell = getVoronoiCell(site, allSites, voronoiBounds);
+            if (cell.length > 0) {
+              clipPath.moveTo(cell[0].x, cell[0].y);
+              for (let i = 1; i < cell.length; i++) {
+                const p1 = cell[i];
+                clipPath.lineTo(p1.x, p1.y);
+              }
+              clipPath.closePath();
+
+              // Check each edge if it's shared with another player
+              for (let i = 0; i < cell.length; i++) {
+                const p1 = cell[i];
+                const p2 = cell[(i + 1) % cell.length];
+                const midP = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+
+                const isSharedWithOther = otherSites.some(os => {
+                  const dx = os.x - site.x;
+                  const dy = os.y - site.y;
+                  const d2 = dx*dx + dy*dy;
+                  if (d2 < 1) return false;
+                  const midX = (site.x + os.x) / 2;
+                  const midY = (site.y + os.y) / 2;
+                  const distToBisector = Math.abs(dx * (midP.x - midX) + dy * (midP.y - midY)) / Math.sqrt(d2);
+                  return distToBisector < 0.1;
+                });
+
+                if (isSharedWithOther) {
+                  conflictingEdgesPath.moveTo(p1.x, p1.y);
+                  conflictingEdgesPath.lineTo(p2.x, p2.y);
                 }
               }
             }
-            // 4. Squares
-            ownedOutposts.forEach(o => {
-              const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
-              const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-              const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-              if (hasTR && hasBL && hasBR) ctx.rect(o.x, o.y, OUTPOST_SPACING, OUTPOST_SPACING);
-            });
+          });
 
-            ctx.fill();
-
-            // Draw border
-            ctx.globalAlpha = 0.4;
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 2;
-            ctx.stroke();
+          if (!territoryCanvasRef.current) territoryCanvasRef.current = document.createElement('canvas');
+          const tCanvas = territoryCanvasRef.current;
+          if (tCanvas.width !== canvas.width || tCanvas.height !== canvas.height) {
+            tCanvas.width = canvas.width;
+            tCanvas.height = canvas.height;
           }
+          const tCtx = tCanvas.getContext('2d')!;
+          tCtx.clearRect(0, 0, tCanvas.width, tCanvas.height);
+
+          tCtx.save();
+          tCtx.translate(canvas.width / 2, canvas.height / 2);
+          tCtx.scale(camera.current.zoom, camera.current.zoom);
+          tCtx.translate(-camera.current.x, -camera.current.y);
+
+          // 1. Draw natural borders (clipped by Voronoi)
+          tCtx.save();
+          tCtx.clip(clipPath);
+          tCtx.globalAlpha = 0.4;
+          tCtx.strokeStyle = color;
+          tCtx.lineWidth = 4;
+          tCtx.stroke(path);
+          // Erase internal lines
+          tCtx.globalCompositeOperation = 'destination-out';
+          tCtx.globalAlpha = 1.0;
+          tCtx.fill(path);
+          tCtx.restore();
+
+          // 2. Draw Voronoi borders (clipped by building range)
+          tCtx.save();
+          tCtx.clip(path);
+          tCtx.globalAlpha = 0.4;
+          tCtx.strokeStyle = color;
+          tCtx.lineWidth = 2;
+          tCtx.stroke(conflictingEdgesPath);
+          tCtx.restore();
+
+          // 3. Fill hatch pattern (behind everything)
+          tCtx.save();
+          tCtx.clip(clipPath);
+          tCtx.globalCompositeOperation = 'destination-over';
+          const pattern = ctx.createPattern(getHatchCanvas(color), 'repeat');
+          if (pattern) {
+            tCtx.fillStyle = pattern;
+            tCtx.globalAlpha = 0.2;
+            tCtx.fill(path);
+          }
+          tCtx.restore();
+
+          tCtx.restore(); // Final restore for tCtx.save() at start
+
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(tCanvas, 0, 0);
           ctx.restore();
         };
 
-        // Draw territory for all players
         for (const pId in store.state.players) {
           const p = store.state.players[pId];
           drawTerritory(pId, ctx, p.color);
