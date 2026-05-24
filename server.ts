@@ -30,7 +30,7 @@ const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
 
 function isPointInTerritory(px: number, py: number, userId: string, gameState: any, constants: any) {
   // 1. Check Base (radius 450)
-  const playerBase = Object.values(gameState.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+  const playerBase = ((Object.values(gameState.buildings) as any[])).find((b: any) => b.ownerId === userId && b.type === 'base');
   if (playerBase) {
     const dx = px - playerBase.x;
     const dy = py - playerBase.y;
@@ -38,7 +38,7 @@ function isPointInTerritory(px: number, py: number, userId: string, gameState: a
   }
 
   // 2. Check Outposts
-  const ownedOutposts = Object.values(gameState.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
+  const ownedOutposts = ((Object.values(gameState.buildings) as any[])).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
   const OUTPOST_BUILD_RADIUS = 400;
   const OUTPOST_SPACING = 600;
 
@@ -88,8 +88,8 @@ function isPointInTerritory(px: number, py: number, userId: string, gameState: a
 }
 
 function isPointInValidMiningArea(x: number, y: number, ownerId: string, gameState: GameState, constants: any): boolean {
-  const playerBase = Object.values(gameState.buildings).find(b => b.ownerId === ownerId && b.type === 'base');
-  const ownedOutposts = Object.values(gameState.buildings).filter(b => b.ownerId === ownerId && b.type === 'outpost');
+  const playerBase = ((Object.values(gameState.buildings) as any[])).find(b => b.ownerId === ownerId && b.type === 'base');
+  const ownedOutposts = ((Object.values(gameState.buildings) as any[])).filter(b => b.ownerId === ownerId && b.type === 'outpost');
   const OUTPOST_BUILD_RADIUS = 400;
   const OUTPOST_SPACING = 600;
 
@@ -135,7 +135,7 @@ function isPointInValidMiningArea(x: number, y: number, ownerId: string, gameSta
   }
 
   // Check adjacent neutral outposts
-  const neutralOutposts = Object.values(gameState.buildings).filter(b => b.ownerId === 'neutral' && b.type === 'outpost');
+  const neutralOutposts = ((Object.values(gameState.buildings) as any[])).filter(b => b.ownerId === 'neutral' && b.type === 'outpost');
   for (const no of neutralOutposts) {
     const isAdjacentToOwned = ownedOutposts.some(oo => {
       const dx = Math.abs(oo.x - no.x), dy = Math.abs(oo.y - no.y);
@@ -149,6 +149,52 @@ function isPointInValidMiningArea(x: number, y: number, ownerId: string, gameSta
 
   return false;
 }
+function isCrossingFence(oldX: number, oldY: number, newX: number, newY: number, userId: string, gameState: GameState): boolean {
+  const S = 600;
+  const buildings = Object.values(gameState.buildings);
+  const outposts = buildings.filter(b => b.type === 'outpost') as Building[];
+
+  // Find all pairs of adjacent outposts owned by the same player (not userId)
+  for (let i = 0; i < outposts.length; i++) {
+    for (let j = i + 1; j < outposts.length; j++) {
+      const a = outposts[i];
+      const b = outposts[j];
+
+      if (a.ownerId === 'neutral' || a.ownerId !== b.ownerId || a.ownerId === userId) continue;
+
+      const dx = Math.abs(a.x - b.x);
+      const dy = Math.abs(a.y - b.y);
+
+      // If adjacent
+      if ((Math.abs(dx - S) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - S) < 1)) {
+        // Line segment from (a.x, a.y) to (b.x, b.y)
+        // Check if line segment from (oldX, oldY) to (newX, newY) intersects it
+        if (intersects(oldX, oldY, newX, newY, a.x, a.y, b.x, b.y)) {
+           // Only block if moving from outside to inside?
+           // User said: "enemies are allowed to exit but can't enter"
+           // "Inside" means the territory of the owner.
+           const wasIn = isPointInTerritory(oldX, oldY, a.ownerId, gameState, constants);
+           const nowIn = isPointInTerritory(newX, newY, a.ownerId, gameState, constants);
+           if (!wasIn && nowIn) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function intersects(a: number, b: number, c: number, d: number, p: number, q: number, r: number, s: number) {
+  var det, gamma, lambda;
+  det = (c - a) * (s - q) - (r - p) * (d - b);
+  if (det === 0) {
+    return false;
+  } else {
+    lambda = ((s - q) * (r - a) + (p - r) * (s - b)) / det;
+    gamma = ((b - d) * (r - a) + (c - a) * (s - b)) / det;
+    return (0 < lambda && lambda < 1) && (0 < gamma && gamma < 1);
+  }
+}
+
 
 async function startServer() {
   const app = express();
@@ -368,10 +414,16 @@ function generateChunk(cx: number, cy: number) {
     socket.on('move', (data: { x: number; y: number }) => {
       const player = gameState.players[userId];
       if (player) {
-         player.x = data.x;
-         player.y = data.y;
+         if (!isCrossingFence(player.x, player.y, data.x, data.y, userId, gameState)) {
+            player.x = data.x;
+            player.y = data.y;
+         } else {
+            // Push back slightly? Or just don't move.
+            socket.emit('player_updated', player); // Force sync back
+         }
       }
     });
+
 
     socket.on('build', (data: { type: Building['type'], x: number, y: number }) => {
       const player = gameState.players[userId];
@@ -380,7 +432,7 @@ function generateChunk(cx: number, cy: number) {
       if (data.type === 'miner' as any) return;
 
       if (data.type === 'base') {
-        const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === userId && b.type === 'base');
+        const hasBase = ((Object.values(gameState.buildings) as any[])).some(b => b.ownerId === userId && b.type === 'base');
         if (hasBase) return;
       } else {
         if (!isPointInTerritory(data.x, data.y, userId, gameState, constants)) return;
@@ -459,7 +511,7 @@ function generateChunk(cx: number, cy: number) {
             player.inventory.stone >= finalCost.stone && 
             player.inventory.gold >= finalCost.gold) {
           
-          const base = Object.values(gameState.buildings).find(b => b.ownerId === userId && b.type === 'base');
+          const base = ((Object.values(gameState.buildings) as any[])).find(b => b.ownerId === userId && b.type === 'base');
           if (!base) return;
 
           player.inventory.wood -= finalCost.wood;
@@ -628,7 +680,7 @@ function generateChunk(cx: number, cy: number) {
         // 1. Base Tax Income
         const baseTaxLvl = p.upgrades?.base_tax || 0;
         if (baseTaxLvl > 0) {
-          const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === p.id && b.type === 'base');
+          const hasBase = ((Object.values(gameState.buildings) as any[])).some(b => b.ownerId === p.id && b.type === 'base');
           if (hasBase) {
             p.inventory.wood += baseTaxLvl * 1;
             p.inventory.stone += baseTaxLvl * 1;
@@ -640,7 +692,7 @@ function generateChunk(cx: number, cy: number) {
         // 2. Wall Solar Generation
         const wallSolarLvl = p.upgrades?.wall_solar || 0;
         if (wallSolarLvl > 0) {
-          const wallCount = Object.values(gameState.buildings).filter(b => b.ownerId === p.id && b.type === 'wall').length;
+          const wallCount = ((Object.values(gameState.buildings) as any[])).filter(b => b.ownerId === p.id && b.type === 'wall').length;
           if (wallCount > 0) {
             p.inventory.wood += wallSolarLvl * wallCount * 1;
             p.inventory.stone += wallSolarLvl * wallCount * 1;
@@ -662,7 +714,7 @@ function generateChunk(cx: number, cy: number) {
         // 3. Turret Collectors
         const turretCollectorLvl = p.upgrades?.turret_collector || 0;
         if (turretCollectorLvl > 0) {
-          const turretCount = Object.values(gameState.buildings).filter(b => b.ownerId === p.id && b.type === 'turret').length;
+          const turretCount = ((Object.values(gameState.buildings) as any[])).filter(b => b.ownerId === p.id && b.type === 'turret').length;
           if (turretCount > 0) {
             p.inventory.wood += turretCollectorLvl * turretCount * 1;
             p.inventory.stone += turretCollectorLvl * turretCount * 1;
@@ -682,7 +734,7 @@ function generateChunk(cx: number, cy: number) {
 
     // Turret attacking
     if (ticksCount % constants.TURRET_ATTACK_INTERVAL_TICKS === 0) { // Every 1 second
-      Object.values(gameState.buildings).forEach(b => {
+      ((Object.values(gameState.buildings) as any[])).forEach(b => {
         if (b.type === 'turret') {
           // Find closest enemy building
           let closestDist = constants.TURRET_RANGE;
@@ -717,8 +769,21 @@ function generateChunk(cx: number, cy: number) {
 
 
     // Outpost capture logic
-    Object.values(gameState.buildings).forEach(b => {
+    ((Object.values(gameState.buildings) as any[])).forEach(b => {
       if (b.type === 'outpost') {
+        const oldLocked = b.isLocked;
+        if (b.ownerId === 'neutral') {
+          b.isLocked = false;
+        } else {
+          const S = 600;
+          const neighbors = [
+            `outpost-${b.x - S}-${b.y - S}`, `outpost-${b.x}-${b.y - S}`, `outpost-${b.x + S}-${b.y - S}`,
+            `outpost-${b.x - S}-${b.y}`,                                 `outpost-${b.x + S}-${b.y}`,
+            `outpost-${b.x - S}-${b.y + S}`, `outpost-${b.x}-${b.y + S}`, `outpost-${b.x + S}-${b.y + S}`
+          ];
+          b.isLocked = neighbors.every(id => gameState.buildings[id]?.ownerId === b.ownerId);
+        }
+
         const playersNear = Object.values(gameState.players).filter(p => {
           const dx = p.x - b.x;
           const dy = p.y - b.y;
@@ -732,7 +797,11 @@ function generateChunk(cx: number, cy: number) {
         const oldCapturer = b.capturingPlayerId;
         const oldConflict = b.isConflict;
 
-        if (playersNear.length === 0) {
+        if (b.isLocked) {
+          b.isConflict = false;
+          b.capturingPlayerId = null;
+          b.captureProgress = 100;
+        } else if (playersNear.length === 0) {
           b.isConflict = false;
           b.capturingPlayerId = null;
           // Slow decay
@@ -750,7 +819,7 @@ function generateChunk(cx: number, cy: number) {
 
           if (b.ownerId === 'neutral') {
             const player = gameState.players[capturerId];
-            const ownedOutposts = Object.values(gameState.buildings).filter((ob: any) => ob.ownerId === capturerId && ob.type === 'outpost').length;
+            const ownedOutposts = ((Object.values(gameState.buildings) as any[])).filter((ob: any) => ob.ownerId === capturerId && ob.type === 'outpost').length;
             const expansionLvl = player?.upgrades?.base_expansion || 0;
             const maxOutposts = Math.pow(expansionLvl + 2, 2);
             if (ownedOutposts >= maxOutposts) {
@@ -772,7 +841,7 @@ function generateChunk(cx: number, cy: number) {
           }
         }
 
-        if (b.captureProgress !== oldProgress || b.ownerId !== oldOwner || b.capturingPlayerId !== oldCapturer || b.isConflict !== oldConflict) {
+        if (b.captureProgress !== oldProgress || b.ownerId !== oldOwner || b.capturingPlayerId !== oldCapturer || b.isConflict !== oldConflict || b.isLocked !== oldLocked) {
           io.emit('building_updated', b);
         }
       }
@@ -837,8 +906,8 @@ function generateChunk(cx: number, cy: number) {
               if (dist <= moveDist) {
                 u.x = r.x; u.y = r.y; u.state = 'mining';
               } else {
-                u.x += (dx / dist) * moveDist;
-                u.y += (dy / dist) * moveDist;
+                const nextX = u.x + (dx / dist) * moveDist; const nextY = u.y + (dy / dist) * moveDist; if (!isCrossingFence(u.x, u.y, nextX, nextY, u.ownerId, gameState)) { u.x = nextX; u.y = nextY; }
+
               }
             }
          } else if (u.state === 'mining') {
@@ -881,7 +950,7 @@ function generateChunk(cx: number, cy: number) {
               u.state = 'returning';
             }
          } else if (u.state === 'returning') {
-            const validDropoffs = Object.values(gameState.buildings).filter(b =>
+            const validDropoffs = ((Object.values(gameState.buildings) as any[])).filter(b =>
               b.ownerId === u.ownerId && (b.type === 'base' || b.type === 'outpost')
             );
 
@@ -916,8 +985,8 @@ function generateChunk(cx: number, cy: number) {
               u.state = 'idle';
             } else {
               const moveDist = MINER_SPEED * dt;
-              u.x += (dx / dist) * moveDist;
-              u.y += (dy / dist) * moveDist;
+              const nextX = u.x + (dx / dist) * moveDist; const nextY = u.y + (dy / dist) * moveDist; if (!isCrossingFence(u.x, u.y, nextX, nextY, u.ownerId, gameState)) { u.x = nextX; u.y = nextY; }
+
             }
          }
        }

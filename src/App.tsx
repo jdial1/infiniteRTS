@@ -49,6 +49,7 @@ const wallIconWhite = createIconImage(getIconComponent(icons.buildings.wall.name
 const turretIconWhite = createIconImage(getIconComponent(icons.buildings.turret.name, icons.buildings.turret.library), icons.buildings.turret.color);
 const minerIconWhite = createIconImage(getIconComponent(icons.buildings.miner.name, icons.buildings.miner.library), icons.buildings.miner.color);
 const outpostIconWhite = createIconImage(getIconComponent(icons.buildings.outpost.name, icons.buildings.outpost.library), icons.buildings.outpost.color);
+const lockIconWhite = createIconImage(getIconComponent("Lock", "lucide"), "#ffffff");
 
 let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
 
@@ -101,8 +102,8 @@ function getVoronoiCell(site: Point, allSites: Point[], bounds: { minX: number; 
   return cell;
 }
 function getTerritoryPaths(userId: string, buildings: any, constants: any, voronoiBounds: any) {
-  const allSites = Object.values(buildings)
-    .filter((b: any) => b.type === 'base' || b.type === 'outpost')
+  const allSites = ((Object.values(buildings) as any[]))
+    .filter((b: Building) => b.type === 'base' || b.type === 'outpost')
     .map((b: any) => ({
       x: b.x,
       y: b.y,
@@ -113,8 +114,8 @@ function getTerritoryPaths(userId: string, buildings: any, constants: any, voron
   const mySites = allSites.filter(s => s.ownerId === userId);
   if (mySites.length === 0) return null;
 
-  const ownedOutposts = Object.values(buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
-  const playerBase = Object.values(buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+  const ownedOutposts = ((Object.values(buildings) as any[])).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
+  const playerBase = ((Object.values(buildings) as any[])).find((b: any) => b.ownerId === userId && b.type === 'base');
   const OUTPOST_BUILD_RADIUS = 400;
   const OUTPOST_SPACING = 600;
 
@@ -257,7 +258,8 @@ function drawTextAlongArc(ctx: CanvasRenderingContext2D, str: string, centerX: n
     ctx.fillText(char, 0, -radius);
     ctx.rotate(charAngle / 2);
   }
-
+  ctx.restore();
+}
 function isPointInTerritory(px: number, py: number, userId: string, gameState: GameState, constants: any) {
   if (!gameState) return false;
   // 1. Check Base (radius 450)
@@ -318,9 +320,6 @@ function isPointInTerritory(px: number, py: number, userId: string, gameState: G
   return false;
 }
 
-
-  ctx.restore();
-}
 
 // A mutable store for fast canvas rendering without React re-renders
 class GameStore {
@@ -936,6 +935,13 @@ export default function App() {
 
     let animFrame: number;
     let lastTime = performance.now();
+        const viewDistVoronoi = 2000 / camera.current.zoom;
+        const voronoiBounds = {
+          minX: camera.current.x - viewDistVoronoi,
+          minY: camera.current.y - viewDistVoronoi,
+          maxX: camera.current.x + viewDistVoronoi,
+          maxY: camera.current.y + viewDistVoronoi
+        };
 
     const loop = (time: number) => {
       const dt = Math.min((time - lastTime) / 1000, 0.1); // cap dt to avoid crazy jumps
@@ -1119,20 +1125,13 @@ export default function App() {
         ctx.scale(camera.current.zoom, camera.current.zoom);
         ctx.translate(-camera.current.x, -camera.current.y);
         const allSites = Object.values(store.state.buildings)
-          .filter((b: any) => b.type === 'base' || b.type === 'outpost')
+          .filter((b: Building) => b.type === 'base' || b.type === 'outpost')
           .map((b: any) => ({
             x: b.x,
             y: b.y,
             ownerId: b.ownerId,
             radius: b.type === 'base' ? constants.BUILD_RANGE : 400
           }));
-
-        const viewDistVoronoi = 2000 / camera.current.zoom;
-        const voronoiBounds = {
-          minX: camera.current.x - viewDistVoronoi,
-          minY: camera.current.y - viewDistVoronoi,
-          maxX: camera.current.x + viewDistVoronoi,
-          maxY: camera.current.y + viewDistVoronoi
         };
 
         const drawTerritory = (userId: string, ctx: CanvasRenderingContext2D, color: string) => {
@@ -1360,6 +1359,77 @@ export default function App() {
           }
         }
 
+    const drawFence = (ctx: CanvasRenderingContext2D) => {
+      const buildings = Object.values(store.state.buildings);
+      const outposts = buildings.filter(b => b.type === 'outpost') as Building[];
+      const S = 600;
+
+      ctx.save();
+      for (let i = 0; i < outposts.length; i++) {
+        for (let j = i + 1; j < outposts.length; j++) {
+          const a = outposts[i];
+          const b = outposts[j];
+
+          if (a.ownerId === 'neutral' || a.ownerId !== b.ownerId) continue;
+
+          const dx = Math.abs(a.x - b.x);
+          const dy = Math.abs(a.y - b.y);
+
+          if ((Math.abs(dx - S) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - S) < 1)) {
+            const player = store.state.players[a.ownerId];
+            const color = player?.color || '#ffffff';
+
+            // Draw 3D-ish fence
+            const fenceHeight = 40;
+
+            // Base line
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            ctx.setLineDash([10, 5]);
+            ctx.stroke();
+
+            // Vertical posts and top wire
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 0.6;
+
+            // Gradient for 3D effect
+            const grad = ctx.createLinearGradient(a.x, a.y, a.x, a.y - fenceHeight);
+            grad.addColorStop(0, color);
+            grad.addColorStop(1, 'white');
+
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(a.x, a.y - fenceHeight);
+            ctx.moveTo(b.x, b.y);
+            ctx.lineTo(b.x, b.y - fenceHeight);
+            ctx.lineTo(a.x, a.y - fenceHeight);
+
+            ctx.strokeStyle = grad;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Fill between top and bottom with a slight tint
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.lineTo(b.x, b.y - fenceHeight);
+            ctx.lineTo(a.x, a.y - fenceHeight);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.1;
+            ctx.fill();
+            ctx.globalAlpha = 1.0;
+          }
+        }
+      }
+      ctx.restore();
+    };
+
+    drawFence(ctx);
+
         // Draw Buildings
         for (const bId in store.state.buildings) {
           const b = store.state.buildings[bId];
@@ -1413,6 +1483,13 @@ export default function App() {
           if (img && img.complete && img.naturalWidth > 0) {
             const iconSize = b.type === 'base' ? 15 : (b.type === 'wall' ? 8 : (b.type === 'outpost' ? 15 : 11));
             ctx.drawImage(img, b.x - iconSize, b.y - iconSize, iconSize * 2, iconSize * 2);
+
+            // Draw lock icon if locked
+            if (b.type === 'outpost' && b.isLocked) {
+              const lockSize = 12;
+              ctx.drawImage(lockIconWhite, b.x - lockSize/2, b.y - lockSize/2, lockSize, lockSize);
+            }
+          }
           // Draw capture ring for outposts
           if (b.type === 'outpost') {
             const captureProgress = b.captureProgress || 0;
@@ -2024,11 +2101,8 @@ export default function App() {
           mctx.strokeStyle = '#fff';
           mctx.lineWidth = 1.5 / scale;
           mctx.strokeRect(camera.current.x - viewWidth/2, camera.current.y - viewHeight/2, viewWidth, viewHeight);
-
           mctx.restore();
         }
-      }     }
-
       animFrame = requestAnimationFrame(loop);
     };
 
@@ -2037,6 +2111,7 @@ export default function App() {
   }, [buildMode, showMinimap, socket, mapSettings]);
 
   const shouldFlashBuild = !isBuildOpen && (!hasBase || totalMiners === 0);
+
 
   return (
     <div className="fixed inset-0 w-screen h-dvh overflow-hidden bg-gray-900 select-none text-slate-100">
