@@ -1427,6 +1427,17 @@ export default function App() {
               ctx.fillStyle = '#ef4444';
               ctx.textAlign = 'center';
               ctx.fillText('CONFLICT', b.x, b.y - size - 15);
+            } else if (captureProgress === 0 && b.ownerId === 'neutral' && b.capturingPlayerId) {
+              const capturer = store.state.players[b.capturingPlayerId];
+              const currentOwned = Object.values(store.state.buildings).filter((ob: any) => ob.ownerId === b.capturingPlayerId && ob.type === 'outpost').length;
+              const expLvl = capturer?.upgrades?.base_expansion || 0;
+              const maxOut = Math.pow(expLvl + 2, 2);
+              if (currentOwned >= maxOut) {
+                ctx.font = 'bold 10px Inter';
+                ctx.fillStyle = '#f87171';
+                ctx.textAlign = 'center';
+                ctx.fillText('LIMIT REACHED', b.x, b.y - size - 15);
+              }
             } else if (captureProgress > 0 && captureProgress < 100) {
               ctx.beginPath();
               const startAngle = -Math.PI / 2;
@@ -2551,7 +2562,8 @@ export default function App() {
             {/* 3. UPGRADES SUBPANEL */}
             {isUpgradesOpen && (() => {
               const getUpgradeCost = (upg: any, level: number) => {
-                const factor = Math.pow(1.5, level);
+                const multiplier = upg.id === "base_expansion" ? 4 : 1.5;
+                const factor = Math.pow(multiplier, level);
                 return {
                   wood: Math.round(upg.baseCost.wood * factor),
                   stone: Math.round(upg.baseCost.stone * factor),
@@ -2611,8 +2623,10 @@ export default function App() {
                         bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
                       } else if (upg.id === 'turret_beam') {
                         bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
-                      }
+                      } else if (upg.id === "base_expansion") {
+                        bonusStr = `${Math.pow(lvl + 2, 2)} → ${Math.pow(lvl + 3, 2)} outposts`;
 
+                      }
                       return (
                         <div 
                           key={upg.id} 

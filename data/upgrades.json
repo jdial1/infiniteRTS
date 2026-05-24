@@ -33,6 +33,17 @@
     "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
   },
   {
+    "id": "base_expansion",
+    "name": "Base Expansion",
+    "description": "Increases maximum outpost capacity.",
+    "category": "Base",
+    "target": "Territory",
+    "effect": "Outpost Limit",
+    "icon": "Maximize",
+    "iconLibrary": "lucide",
+    "baseCost": { "wood": 1000, "stone": 1000, "gold": 1000 }
+  },
+  {
     "id": "base_construction",
     "name": "Construct Beacon",
     "description": "Reduces training and construction costs by 10%.",
