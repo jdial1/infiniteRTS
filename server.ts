@@ -23,6 +23,7 @@ function randomInt(min: number, max: number) {
 
 const CHUNK_SIZE = constants.CHUNK_SIZE;
 const generatedChunks = new Set<string>();
+let totalOutpostsGenerated = 0;
 const chunkData = new Map<string, { resources: ResourceNode[], zones: MapZone[] }>();
 const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
 
@@ -112,13 +113,20 @@ function generateChunk(cx: number, cy: number) {
     for (let y = Math.ceil(by / OUTPOST_SPACING) * OUTPOST_SPACING; y < by + CHUNK_SIZE; y += OUTPOST_SPACING) {
       const oId = `outpost-${x}-${y}`;
       if (!gameState.buildings[oId]) {
+        totalOutpostsGenerated++;
+        let subType: Building['subType'] = undefined;
+        let health = 500;
+        if (totalOutpostsGenerated % 10 === 0) {
+          const types: Building['subType'][] = ['refinery', 'guard_tower', 'market', 'sanctuary', 'fortress'];
+          subType = types[Math.floor(Math.random() * types.length)];
+          if (subType === 'fortress') health = 1500;
+        }
         gameState.buildings[oId] = {
           id: oId,
           ownerId: 'neutral',
           type: 'outpost',
-          x,
-          y,
-          health: 500,
+          subType,
+          x, y, health,
           captureProgress: 0,
           capturingPlayerId: null,
           isConflict: false
@@ -617,10 +625,14 @@ function generateChunk(cx: number, cy: number) {
 
     let combatEvents: { from: {x:number, y:number, id:string}, to: {x:number, y:number, id:string}, damage: number }[] = [];
 
-    // Turret attacking
+    // Turret and Guard Tower attacking
     if (ticksCount % constants.TURRET_ATTACK_INTERVAL_TICKS === 0) { // Every 1 second
       Object.values(gameState.buildings).forEach(b => {
-        if (b.type === 'turret') {
+        const isTurret = b.type === 'turret';
+        const isGuardTower = b.type === 'outpost' && b.ownerId !== 'neutral' && b.subType === 'guard_tower';
+
+        if (isTurret || isGuardTower) {
+          const damage = isGuardTower ? 20 : 10;
           // Find closest enemy building
           let closestDist = constants.TURRET_RANGE;
           let target = null;
@@ -635,11 +647,11 @@ function generateChunk(cx: number, cy: number) {
             }
           }
           if (target) {
-            target.health -= 10;
+            target.health -= damage;
             combatEvents.push({
               from: { x: b.x, y: b.y, id: b.id },
               to: { x: target.x, y: target.y, id: target.id },
-              damage: 10
+              damage: damage
             });
             if (target.health <= 0) {
               delete gameState.buildings[target.id];
@@ -685,6 +697,8 @@ function generateChunk(cx: number, cy: number) {
           const capturerId = playersNear[0].id;
           b.capturingPlayerId = capturerId;
 
+          const captureSpeed = b.subType === 'fortress' ? 0.5 : 1.0;
+
           if (b.ownerId === 'neutral') {
             const player = gameState.players[capturerId];
             const ownedOutposts = Object.values(gameState.buildings).filter((ob: any) => ob.ownerId === capturerId && ob.type === 'outpost').length;
@@ -693,17 +707,19 @@ function generateChunk(cx: number, cy: number) {
             if (ownedOutposts >= maxOutposts) {
               b.captureProgress = 0;
             } else {
-              b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
-              if (b.captureProgress === 100) {
+              b.captureProgress = Math.min(100, (b.captureProgress || 0) + captureSpeed);
+              if (b.captureProgress >= 100) {
+                b.captureProgress = 100;
                 b.ownerId = capturerId;
               }
             }
           } else if (b.ownerId === capturerId) {
-            b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
+            b.captureProgress = Math.min(100, (b.captureProgress || 0) + captureSpeed);
           } else {
             // Neutralize enemy outpost
-            b.captureProgress = Math.max(0, (b.captureProgress || 0) - 1);
-            if (b.captureProgress === 0) {
+            b.captureProgress = Math.max(0, (b.captureProgress || 0) - captureSpeed);
+            if (b.captureProgress <= 0) {
+              b.captureProgress = 0;
               b.ownerId = 'neutral';
             }
           }
@@ -714,6 +730,58 @@ function generateChunk(cx: number, cy: number) {
         }
       }
     });
+
+    // Outpost Passive Income (Refinery, Market) - Every 5 seconds
+    if (ticksCount % 50 === 0) {
+      const inventoryUpdates: Record<string, any> = {};
+      Object.values(gameState.buildings).forEach(b => {
+        if (b.type === 'outpost' && b.ownerId !== 'neutral') {
+          const p = gameState.players[b.ownerId];
+          if (!p) return;
+          if (b.subType === 'refinery') {
+            p.inventory.gold += 1;
+            inventoryUpdates[p.id] = p.inventory;
+          } else if (b.subType === 'market') {
+            p.inventory.wood += 1;
+            p.inventory.stone += 1;
+            inventoryUpdates[p.id] = p.inventory;
+          }
+        }
+      });
+      for (const pId in inventoryUpdates) {
+        const sId = userToSocket.get(pId);
+        if (sId) io.to(sId).emit('inventory_updated', inventoryUpdates[pId]);
+      }
+    }
+
+    // Sanctuary Healing - Every 5 seconds
+    if (ticksCount % 50 === 0) {
+      let healingEvents: { x: number, y: number, radius: number }[] = [];
+      Object.values(gameState.buildings).forEach(b => {
+        if (b.type === 'outpost' && b.ownerId !== 'neutral' && b.subType === 'sanctuary') {
+          let healed = false;
+          Object.values(gameState.buildings).forEach(eb => {
+            if (eb.ownerId === b.ownerId) {
+              const maxHealth = buildings[eb.type]?.health || 100;
+              if (eb.health < maxHealth) {
+                const dist = Math.sqrt(Math.pow(eb.x - b.x, 2) + Math.pow(eb.y - b.y, 2));
+                if (dist <= 300) {
+                  eb.health = Math.min(eb.health + 5, maxHealth);
+                  io.emit('building_updated', eb);
+                  healed = true;
+                }
+              }
+            }
+          });
+          if (healed) {
+            healingEvents.push({ x: b.x, y: b.y, radius: 300 });
+          }
+        }
+      });
+      if (healingEvents.length > 0) {
+        io.emit('healing_events', healingEvents);
+      }
+    }
 
     if (combatEvents.length > 0) {
       io.emit('combat_events', combatEvents);
