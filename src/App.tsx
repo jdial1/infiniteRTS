@@ -48,8 +48,28 @@ const baseIconWhite = createIconImage(getIconComponent(icons.buildings.base.name
 const wallIconWhite = createIconImage(getIconComponent(icons.buildings.wall.name, icons.buildings.wall.library), icons.buildings.wall.color);
 const turretIconWhite = createIconImage(getIconComponent(icons.buildings.turret.name, icons.buildings.turret.library), icons.buildings.turret.color);
 const minerIconWhite = createIconImage(getIconComponent(icons.buildings.miner.name, icons.buildings.miner.library), icons.buildings.miner.color);
+const outpostIconWhite = createIconImage(getIconComponent(icons.buildings.outpost.name, icons.buildings.outpost.library), icons.buildings.outpost.color);
 
 let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
+
+const hatchCanvasCache: Record<string, HTMLCanvasElement> = {};
+function getHatchCanvas(color: string): HTMLCanvasElement {
+  if (!hatchCanvasCache[color]) {
+    const pCanvas = document.createElement('canvas');
+    pCanvas.width = 16;
+    pCanvas.height = 16;
+    const pCtx = pCanvas.getContext('2d')!;
+    pCtx.strokeStyle = color;
+    pCtx.lineWidth = 2;
+    pCtx.beginPath();
+    pCtx.moveTo(0, 16);
+    pCtx.lineTo(16, 0);
+    pCtx.stroke();
+    hatchCanvasCache[color] = pCanvas;
+  }
+  return hatchCanvasCache[color];
+}
+
 function getRedHatchCanvas(): HTMLCanvasElement {
   if (!cachedRedHatchCanvas) {
     const pCanvas = document.createElement('canvas');
@@ -630,11 +650,8 @@ export default function App() {
                        alert('You must construct a Base first before building other structures!');
                        canPlace = false;
                     } else {
-                       const dx = mouse.current.x - myBase.x;
-                       const dy = mouse.current.y - myBase.y;
-                       const distToBas = Math.sqrt(dx * dx + dy * dy);
-                       if (distToBas > 450) {
-                          alert("Cannot place here! This structure is outside your Base's building range (450m).");
+                       if (!isPointInTerritory(mouse.current.x, mouse.current.y, store.me.id)) {
+                          alert("Cannot place here! This structure is outside your territory.");
                           canPlace = false;
                        }
                     }
@@ -708,6 +725,52 @@ export default function App() {
     let lastTime = performance.now();
 
     const loop = (time: number) => {
+        const isPointInTerritory = (px: number, py: number, userId: string): boolean => {
+          // 1. Check Base (radius 450)
+          const playerBase = Object.values(store.state.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+          if (playerBase) {
+            const dx = px - playerBase.x;
+            const dy = py - playerBase.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= constants.BUILD_RANGE) return true;
+          }
+
+          // 2. Check Outposts
+          const ownedOutposts = Object.values(store.state.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
+          const OUTPOST_BUILD_RADIUS = 400;
+          const OUTPOST_SPACING = 600;
+
+          for (const o of ownedOutposts) {
+            const dx = px - o.x;
+            const dy = py - o.y;
+            if (Math.sqrt(dx * dx + dy * dy) <= OUTPOST_BUILD_RADIUS) return true;
+          }
+
+          // 3. Check Bridges (1D)
+          for (let i = 0; i < ownedOutposts.length; i++) {
+            for (let j = i + 1; j < ownedOutposts.length; j++) {
+              const a = ownedOutposts[i], b = ownedOutposts[j];
+              const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+              if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
+                const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+                const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+                if (dx > dy) { if (px >= minX && px <= maxX && Math.abs(py - a.y) <= 200) return true; }
+                else { if (py >= minY && py <= maxY && Math.abs(px - a.x) <= 200) return true; }
+              }
+            }
+          }
+
+          // 4. Check 2D Squares
+          for (const o of ownedOutposts) {
+            const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
+            const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+            const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+            if (hasTR && hasBL && hasBR) {
+              if (px >= o.x && px <= o.x + OUTPOST_SPACING && py >= o.y && py <= o.y + OUTPOST_SPACING) return true;
+            }
+          }
+          return false;
+        };
+
       const dt = Math.min((time - lastTime) / 1000, 0.1); // cap dt to avoid crazy jumps
       lastTime = time;
 
@@ -1083,6 +1146,8 @@ export default function App() {
             ctx.roundRect ? ctx.roundRect(b.x - size, b.y - size, size * 2, size * 2, 3) : ctx.rect(b.x - size, b.y - size, size * 2, size * 2);
           } else if (b.type === 'turret') {
             ctx.arc(b.x, b.y, size, 0, Math.PI * 2);
+          } else if (b.type === 'outpost') {
+            ctx.roundRect ? ctx.roundRect(b.x - size, b.y - size, size * 2, size * 2, 10) : ctx.rect(b.x - size, b.y - size, size * 2, size * 2);
           }
           ctx.fill();
           ctx.strokeStyle = '#000000';
@@ -1094,10 +1159,63 @@ export default function App() {
           if (b.type === 'base') img = baseIconWhite;
           if (b.type === 'wall') img = wallIconWhite;
           if (b.type === 'turret') img = turretIconWhite;
+          if (b.type === 'outpost') img = outpostIconWhite;
 
           if (img && img.complete && img.naturalWidth > 0) {
-            const iconSize = b.type === 'base' ? 15 : (b.type === 'wall' ? 8 : 11);
+            const iconSize = b.type === 'base' ? 15 : (b.type === 'wall' ? 8 : (b.type === 'outpost' ? 15 : 11));
             ctx.drawImage(img, b.x - iconSize, b.y - iconSize, iconSize * 2, iconSize * 2);
+          }
+
+          // Draw capture ring for outposts
+          if (b.type === 'outpost') {
+            const captureProgress = b.captureProgress || 0;
+            const isConflict = b.isConflict;
+            const capturingPlayerColor = b.capturingPlayerId ? (store.state.players[b.capturingPlayerId]?.color || '#ffffff') : '#ffffff';
+
+            // Flashing capture ring
+            ctx.save();
+            const ringRadius = size + 8;
+            const barWidth = 4;
+            const flash = Math.sin(Date.now() / 200) * 0.5 + 0.5;
+
+            // Background ring
+            ctx.beginPath();
+            ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);
+            ctx.strokeStyle = 'rgba(15, 23, 42, 0.4)';
+            ctx.lineWidth = barWidth;
+            ctx.stroke();
+
+            if (isConflict) {
+              ctx.strokeStyle = '#ef4444';
+              ctx.lineWidth = barWidth + (flash * 2);
+              ctx.beginPath();
+              ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);
+              ctx.stroke();
+
+              ctx.font = 'bold 12px Inter';
+              ctx.fillStyle = '#ef4444';
+              ctx.textAlign = 'center';
+              ctx.fillText('CONFLICT', b.x, b.y - size - 15);
+            } else if (captureProgress > 0) {
+              const displayColor = b.ownerId !== 'neutral' ? playerColor : capturingPlayerColor;
+              ctx.beginPath();
+              const startAngle = -Math.PI / 2;
+              const endAngle = startAngle + (captureProgress / 100) * (Math.PI * 2);
+              ctx.arc(b.x, b.y, ringRadius, startAngle, endAngle);
+              ctx.strokeStyle = displayColor;
+              ctx.lineWidth = barWidth;
+              ctx.lineCap = 'round';
+              ctx.stroke();
+
+              // Only flash when capturing (progress is between 0 and 100)
+              if (captureProgress < 100 && flash > 0.5) {
+                ctx.globalAlpha = 0.3;
+                ctx.beginPath();
+                ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);
+                ctx.stroke();
+              }
+            }
+            ctx.restore();
           }
         }
 
@@ -1263,31 +1381,90 @@ export default function App() {
           const size = (buildings as any)[buildMode].size;
           
           // Find player's base to show its building range
-          const myBase = Object.values(store.state?.buildings || {}).find(b => b.ownerId === store.me?.id && b.type === 'base');
 
-          // Highlight building range around the base
-          if (myBase && mapSettings.showBuildAreaBorder) {
-            ctx.save();
-            ctx.strokeStyle = store.me.color;
-            ctx.setLineDash([6, 4]);
-            ctx.lineWidth = 1.5;
-            ctx.globalAlpha = 0.45;
+
+const drawTerritory = (userId: string, ctx: CanvasRenderingContext2D, color: string) => {
+          const ownedOutposts = Object.values(store.state.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
+          const playerBase = Object.values(store.state.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+          const OUTPOST_BUILD_RADIUS = 400;
+          const OUTPOST_SPACING = 600;
+
+          const addTerritoryPath = () => {
             ctx.beginPath();
-            ctx.arc(myBase.x, myBase.y, constants.BUILD_RANGE, 0, Math.PI * 2); // Build range is 450 units
+            // 1. Circles around outposts
+            ownedOutposts.forEach(o => {
+              ctx.moveTo(o.x + OUTPOST_BUILD_RADIUS, o.y);
+              ctx.arc(o.x, o.y, OUTPOST_BUILD_RADIUS, 0, Math.PI * 2);
+            });
+            // 2. Circle around base
+            if (playerBase) {
+              ctx.moveTo(playerBase.x + constants.BUILD_RANGE, playerBase.y);
+              ctx.arc(playerBase.x, playerBase.y, constants.BUILD_RANGE, 0, Math.PI * 2);
+            }
+            // 3. Bridges
+            for (let i = 0; i < ownedOutposts.length; i++) {
+              for (let j = i + 1; j < ownedOutposts.length; j++) {
+                const a = ownedOutposts[i], b = ownedOutposts[j];
+                const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+                if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
+                  const minX = Math.min(a.x, b.x), maxX = Math.max(a.x, b.x);
+                  const minY = Math.min(a.y, b.y), maxY = Math.max(a.y, b.y);
+                  if (dx > dy) ctx.rect(minX, a.y - 200, maxX - minX, 400);
+                  else ctx.rect(a.x - 200, minY, 400, maxY - minY);
+                }
+              }
+            }
+            // 4. Squares
+            ownedOutposts.forEach(o => {
+              const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
+              const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+              const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+              if (hasTR && hasBL && hasBR) ctx.rect(o.x, o.y, OUTPOST_SPACING, OUTPOST_SPACING);
+            });
+          };
+
+          const pattern = ctx.createPattern(getHatchCanvas(color), 'repeat');
+          if (pattern) {
+            ctx.save();
+            // Step 1: Draw the unified outer stroke first.
+            // We use a thicker stroke (e.g., 4px) and we'll clear the inside part.
+            ctx.globalAlpha = 0.6;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 4;
+            addTerritoryPath();
             ctx.stroke();
 
-            ctx.fillStyle = store.me.color;
-            ctx.globalAlpha = 0.04;
+            // Step 2: Use destination-out to clear the INSIDE of the path.
+            // This leaves only the outer boundary of the unified shapes.
+            ctx.globalCompositeOperation = 'destination-out';
+            addTerritoryPath();
             ctx.fill();
 
-            // Label along building range border
-            ctx.fillStyle = store.me.color;
-            ctx.globalAlpha = 0.7;
-            ctx.font = 'bold 9px monospace';
-            ctx.textAlign = 'center';
-            ctx.fillText(`BASE BUILD RANGE (${constants.BUILD_RANGE}m)`, myBase.x, myBase.y - (constants.BUILD_RANGE + 5));
+            // Step 3: Switch back to source-over and draw the fills.
+            ctx.globalCompositeOperation = 'source-over';
+
+            // Solid faint base
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.08;
+            addTerritoryPath();
+            ctx.fill();
+
+            // Hatched pattern
+            ctx.fillStyle = pattern;
+            ctx.globalAlpha = 0.2;
+            addTerritoryPath();
+            ctx.fill();
+
             ctx.restore();
-          } else if (buildMode === 'base' && mapSettings.showBuildAreaBorder) {
+          }
+        };
+
+        // Draw territory for all players
+        for (const pId in store.state.players) {
+          const p = store.state.players[pId];
+          drawTerritory(pId, ctx, p.color);
+        }
+ if (buildMode === 'base' && mapSettings.showBuildAreaBorder) {
             // If they are placing their first base, show the future base range as preview around construction mouse pointer
             ctx.save();
             ctx.strokeStyle = store.me.color;
@@ -1341,7 +1518,7 @@ export default function App() {
               const dx = mouse.current.x - myBase.x;
               const dy = mouse.current.y - myBase.y;
               const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist > constants.BUILD_RANGE) {
+              if (!isPointInTerritory(mouse.current.x, mouse.current.y, store.me.id, store.state, constants)) {
                 canPlace = false;
                 warningText = 'OUT OF RANGE';
               }
@@ -1569,7 +1746,7 @@ export default function App() {
               mctx.arc(b.x, b.y, bSize, 0, Math.PI * 2);
               mctx.fill();
               mctx.stroke();
-            } else if (b.type === 'wall') {
+            } else if (b.type === 'wall' || b.type === 'outpost') {
               mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, bData.minimapCornerRadius) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
               mctx.fill();
               mctx.stroke();
