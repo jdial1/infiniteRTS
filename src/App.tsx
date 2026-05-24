@@ -100,6 +100,93 @@ function getVoronoiCell(site: Point, allSites: Point[], bounds: { minX: number; 
   }
   return cell;
 }
+function getTerritoryPaths(userId: string, buildings: any, constants: any, voronoiBounds: any) {
+  const allSites = Object.values(buildings)
+    .filter((b: any) => b.type === 'base' || b.type === 'outpost')
+    .map((b: any) => ({
+      x: b.x,
+      y: b.y,
+      ownerId: b.ownerId,
+      radius: b.type === 'base' ? constants.BUILD_RANGE : 400
+    }));
+
+  const mySites = allSites.filter(s => s.ownerId === userId);
+  if (mySites.length === 0) return null;
+
+  const ownedOutposts = Object.values(buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
+  const playerBase = Object.values(buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+  const OUTPOST_BUILD_RADIUS = 400;
+  const OUTPOST_SPACING = 600;
+
+  const path = new Path2D();
+  ownedOutposts.forEach(o => {
+    path.moveTo(o.x + OUTPOST_BUILD_RADIUS, o.y);
+    path.arc(o.x, o.y, OUTPOST_BUILD_RADIUS, 0, Math.PI * 2);
+  });
+  if (playerBase) {
+    path.moveTo(playerBase.x + constants.BUILD_RANGE, playerBase.y);
+    path.arc(playerBase.x, playerBase.y, constants.BUILD_RANGE, 0, Math.PI * 2);
+  }
+  for (let i = 0; i < ownedOutposts.length; i++) {
+    for (let j = i + 1; j < ownedOutposts.length; j++) {
+      const a = ownedOutposts[i], b = ownedOutposts[j];
+      const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+      if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
+        const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
+        const maxX = Math.max(a.x, b.x), maxY = Math.max(a.y, b.y);
+        if (dx > dy) path.rect(minX, a.y - 200, maxX - minX, 400);
+        else path.rect(a.x - 200, minY, 400, maxY - minY);
+      }
+    }
+  }
+  ownedOutposts.forEach(o => {
+    const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
+    const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+    const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
+    if (hasTR && hasBL && hasBR) path.rect(o.x, o.y, OUTPOST_SPACING, OUTPOST_SPACING);
+  });
+
+  const clipPath = new Path2D();
+  const conflictingEdgesPath = new Path2D();
+  const otherSites = allSites.filter(s => s.ownerId !== userId);
+
+  mySites.forEach(site => {
+    const cell = getVoronoiCell(site, allSites, voronoiBounds);
+    if (cell.length > 0) {
+      clipPath.moveTo(cell[0].x, cell[0].y);
+      for (let i = 1; i < cell.length; i++) {
+        const p1 = cell[i];
+        clipPath.lineTo(p1.x, p1.y);
+      }
+      clipPath.closePath();
+
+      for (let i = 0; i < cell.length; i++) {
+        const p1 = cell[i];
+        const p2 = cell[(i + 1) % cell.length];
+        const midP = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+
+        const isSharedWithOther = otherSites.some(os => {
+          const dx = os.x - site.x;
+          const dy = os.y - site.y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < 1) return false;
+          const midX = (site.x + os.x) / 2;
+          const midY = (site.y + os.y) / 2;
+          const distToBisector = Math.abs(dx * (midP.x - midX) + dy * (midP.y - midY)) / Math.sqrt(d2);
+          return distToBisector < 0.1;
+        });
+
+        if (isSharedWithOther) {
+          conflictingEdgesPath.moveTo(p1.x, p1.y);
+          conflictingEdgesPath.lineTo(p2.x, p2.y);
+        }
+      }
+    }
+  });
+
+  return { path, clipPath, conflictingEdgesPath };
+}
+
 
 function intersect(p1: Point, p2: Point, midX: number, midY: number, dx: number, dy: number): Point {
   // Line 1: p1 + t(p2 - p1)
@@ -1049,80 +1136,9 @@ export default function App() {
         };
 
         const drawTerritory = (userId: string, ctx: CanvasRenderingContext2D, color: string) => {
-          const mySites = allSites.filter(s => s.ownerId === userId);
-          if (mySites.length === 0) return;
-
-          const ownedOutposts = Object.values(store.state.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
-          const playerBase = Object.values(store.state.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
-          const OUTPOST_BUILD_RADIUS = 400;
-          const OUTPOST_SPACING = 600;
-
-          const path = new Path2D();
-          ownedOutposts.forEach(o => {
-            path.moveTo(o.x + OUTPOST_BUILD_RADIUS, o.y);
-            path.arc(o.x, o.y, OUTPOST_BUILD_RADIUS, 0, Math.PI * 2);
-          });
-          if (playerBase) {
-            path.moveTo(playerBase.x + constants.BUILD_RANGE, playerBase.y);
-            path.arc(playerBase.x, playerBase.y, constants.BUILD_RANGE, 0, Math.PI * 2);
-          }
-          for (let i = 0; i < ownedOutposts.length; i++) {
-            for (let j = i + 1; j < ownedOutposts.length; j++) {
-              const a = ownedOutposts[i], b = ownedOutposts[j];
-              const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
-              if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
-                const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
-                const maxX = Math.max(a.x, b.x), maxY = Math.max(a.y, b.y);
-                if (dx > dy) path.rect(minX, a.y - 200, maxX - minX, 400);
-                else path.rect(a.x - 200, minY, 400, maxY - minY);
-              }
-            }
-          }
-          ownedOutposts.forEach(o => {
-            const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
-            const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-            const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-            if (hasTR && hasBL && hasBR) path.rect(o.x, o.y, OUTPOST_SPACING, OUTPOST_SPACING);
-          });
-
-          const clipPath = new Path2D();
-          const conflictingEdgesPath = new Path2D();
-          const otherSites = allSites.filter(s => s.ownerId !== userId);
-
-          mySites.forEach(site => {
-            const cell = getVoronoiCell(site, allSites, voronoiBounds);
-            if (cell.length > 0) {
-              clipPath.moveTo(cell[0].x, cell[0].y);
-              for (let i = 1; i < cell.length; i++) {
-                const p1 = cell[i];
-                clipPath.lineTo(p1.x, p1.y);
-              }
-              clipPath.closePath();
-
-              // Check each edge if it's shared with another player
-              for (let i = 0; i < cell.length; i++) {
-                const p1 = cell[i];
-                const p2 = cell[(i + 1) % cell.length];
-                const midP = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-
-                const isSharedWithOther = otherSites.some(os => {
-                  const dx = os.x - site.x;
-                  const dy = os.y - site.y;
-                  const d2 = dx*dx + dy*dy;
-                  if (d2 < 1) return false;
-                  const midX = (site.x + os.x) / 2;
-                  const midY = (site.y + os.y) / 2;
-                  const distToBisector = Math.abs(dx * (midP.x - midX) + dy * (midP.y - midY)) / Math.sqrt(d2);
-                  return distToBisector < 0.1;
-                });
-
-                if (isSharedWithOther) {
-                  conflictingEdgesPath.moveTo(p1.x, p1.y);
-                  conflictingEdgesPath.lineTo(p2.x, p2.y);
-                }
-              }
-            }
-          });
+          const paths = getTerritoryPaths(userId, store.state.buildings, constants, voronoiBounds);
+          if (!paths) return;
+          const { path, clipPath, conflictingEdgesPath } = paths;
 
           if (!territoryCanvasRef.current) territoryCanvasRef.current = document.createElement('canvas');
           const tCanvas = territoryCanvasRef.current;
@@ -1172,7 +1188,7 @@ export default function App() {
           }
           tCtx.restore();
 
-          tCtx.restore(); // Final restore for tCtx.save() at start
+          tCtx.restore();
 
           ctx.save();
           ctx.setTransform(1, 0, 0, 1, 0, 0);
@@ -1795,14 +1811,26 @@ export default function App() {
             fctx.fill();
           };
           
-          if (store.me) drawVision(store.me.x, store.me.y, constants.FOG_VISION_HERO);
+          if (store.me) {
+            drawVision(store.me.x, store.me.y, constants.FOG_VISION_HERO);
+
+            // Draw exact territory vision
+            const myPaths = getTerritoryPaths(store.me.id, store.state.buildings, constants, voronoiBounds);
+            if (myPaths) {
+               fctx.save();
+               fctx.clip(myPaths.clipPath);
+               fctx.fillStyle = 'white';
+               fctx.fill(myPaths.path);
+               fctx.restore();
+            }
+          }
           
           Object.values(store.state.buildings).forEach(b => {
              if (b.ownerId === store.me?.id) {
-                let r = 200;
-                if (b.type === 'base') r = constants.FOG_VISION_BASE;
-                if (b.type === 'turret') r = constants.FOG_VISION_TURRET;
-                drawVision(b.x, b.y, r);
+                // Turret still has circular vision beyond territory if any
+                if (b.type === 'turret') {
+                   drawVision(b.x, b.y, constants.FOG_VISION_TURRET);
+                }
              }
           });
           
