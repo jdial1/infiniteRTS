@@ -714,8 +714,7 @@ export default function App() {
                     } else {
                        const dx = mouse.current.x - myBase.x;
                        const dy = mouse.current.y - myBase.y;
-                       const distToBas = Math.sqrt(dx * dx + dy * dy);
-                       if (distToBas > 450) {
+                       if (!isPointInTerritory(mouse.current.x, mouse.current.y, store.me.id, store.state, constants)) {
                           alert("Cannot place here! This structure is outside your territory.");
                           canPlace = false;
                        }
@@ -1028,7 +1027,7 @@ export default function App() {
         // Draw territory for all players
         for (const pId in store.state.players) {
           const p = store.state.players[pId];
-          drawTerritory(pId, ctx, p.color);
+          drawTerritory(pId, ctx, p.color, store, constants);
         }
 
         // Draw Map Grid / Background Zones
@@ -1283,7 +1282,7 @@ export default function App() {
               ctx.lineCap = 'round';
               ctx.stroke();
 
-              if (flash > 0.5) {
+              if (captureProgress > 0 && captureProgress < 100 && flash > 0.5) {
                 ctx.globalAlpha = 0.3;
                 ctx.beginPath();
                 ctx.arc(b.x, b.y, ringRadius, 0, Math.PI * 2);

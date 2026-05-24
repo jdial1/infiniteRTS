@@ -1,6 +1,7 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+let io: Server;
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
@@ -86,16 +87,6 @@ function isPointInTerritory(px: number, py: number, userId: string, gameState: a
 
   return false;
 }
-
-async function startServer() {
-  const app = express();
-  const PORT = parseInt(process.env.PORT || '3000', 10);
-  const httpServer = createServer(app);
-
-  const io = new Server(httpServer, {
-    cors: { origin: '*' } // Be permissive for dev
-  });
-
 
 function generateChunk(cx: number, cy: number) {
   const key = `${cx},${cy}`;
@@ -200,6 +191,14 @@ function generateChunk(cx: number, cy: number) {
 }
 
   // Track socket to user mapping
+async function startServer() {
+  const app = express();
+  const PORT = parseInt(process.env.PORT || '3000', 10);
+  const httpServer = createServer(app);
+
+  io = new Server(httpServer, {
+    cors: { origin: '*' } // Be permissive for dev
+  });
   const socketToUser = new Map<string, string>();
   const userToSocket = new Map<string, string>();
 

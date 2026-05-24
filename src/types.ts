@@ -32,6 +32,7 @@ export interface Building {
   captureProgress?: number;
   capturingPlayerId?: string | null;
   isConflict?: boolean;
+  minimapCornerRadius?: number;
 }
 
 export interface Unit {
