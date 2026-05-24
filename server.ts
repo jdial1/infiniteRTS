@@ -370,7 +370,7 @@ function generateChunk(cx: number, cy: number) {
     });
 
     socket.on('train_unit', (data: { type: 'miner' }) => {
-      const player = gameState.players[socket.id];
+      const player = gameState.players[userId];
       if (!player) return;
 
       if (data.type === 'miner') {
@@ -383,7 +383,7 @@ function generateChunk(cx: number, cy: number) {
         const traitCostLvl = player.upgrades?.trait_cost_upg || 0;
         const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01) - (traitCostLvl * 0.01));
 
-        const numWorkers = Object.values(gameState.units).filter(u => u.ownerId === socket.id && u.type === 'miner').length;
+        const numWorkers = Object.values(gameState.units).filter(u => u.ownerId === userId && u.type === 'miner').length;
         const workerCostMultiplier = Math.pow(2, Math.floor(numWorkers / 10));
 
         const finalCost = {
@@ -396,7 +396,7 @@ function generateChunk(cx: number, cy: number) {
             player.inventory.stone >= finalCost.stone && 
             player.inventory.gold >= finalCost.gold) {
           
-          const base = Object.values(gameState.buildings).find(b => b.ownerId === socket.id && b.type === 'base');
+          const base = Object.values(gameState.buildings).find(b => b.ownerId === userId && b.type === 'base');
           if (!base) return;
 
           player.inventory.wood -= finalCost.wood;
@@ -408,7 +408,7 @@ function generateChunk(cx: number, cy: number) {
           const uId = uuidv4();
           const u: Unit = {
             id: uId,
-            ownerId: socket.id,
+            ownerId: userId,
             type: 'miner',
             x: base.x,
             y: base.y,
