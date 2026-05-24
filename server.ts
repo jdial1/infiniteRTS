@@ -444,7 +444,8 @@ function generateChunk(cx: number, cy: number) {
       
       // Cost factor scales with 1.5x of the last cost
       const baseCost = upgradeMetadata.baseCost;
-      const costFactor = Math.pow(1.5, currentLvl);
+      const multiplier = data.upgradeId === "base_expansion" ? 4 : 1.5;
+      const costFactor = Math.pow(multiplier, currentLvl);
       const finalCost = {
         wood: Math.round(baseCost.wood * costFactor),
         stone: Math.round(baseCost.stone * costFactor),
@@ -685,9 +686,17 @@ function generateChunk(cx: number, cy: number) {
           b.capturingPlayerId = capturerId;
 
           if (b.ownerId === 'neutral') {
-            b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
-            if (b.captureProgress === 100) {
-              b.ownerId = capturerId;
+            const player = gameState.players[capturerId];
+            const ownedOutposts = Object.values(gameState.buildings).filter((ob: any) => ob.ownerId === capturerId && ob.type === 'outpost').length;
+            const expansionLvl = player?.upgrades?.base_expansion || 0;
+            const maxOutposts = Math.pow(expansionLvl + 2, 2);
+            if (ownedOutposts >= maxOutposts) {
+              b.captureProgress = 0;
+            } else {
+              b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
+              if (b.captureProgress === 100) {
+                b.ownerId = capturerId;
+              }
             }
           } else if (b.ownerId === capturerId) {
             b.captureProgress = Math.min(100, (b.captureProgress || 0) + 1);
