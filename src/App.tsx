@@ -49,6 +49,11 @@ const wallIconWhite = createIconImage(getIconComponent(icons.buildings.wall.name
 const turretIconWhite = createIconImage(getIconComponent(icons.buildings.turret.name, icons.buildings.turret.library), icons.buildings.turret.color);
 const minerIconWhite = createIconImage(getIconComponent(icons.buildings.miner.name, icons.buildings.miner.library), icons.buildings.miner.color);
 const outpostIconWhite = createIconImage(getIconComponent(icons.buildings.outpost.name, icons.buildings.outpost.library), icons.buildings.outpost.color);
+const refineryIconWhite = createIconImage(getIconComponent(icons.buildings.refinery.name, icons.buildings.refinery.library), icons.buildings.refinery.color);
+const guardTowerIconWhite = createIconImage(getIconComponent(icons.buildings.guard_tower.name, icons.buildings.guard_tower.library), icons.buildings.guard_tower.color);
+const marketIconWhite = createIconImage(getIconComponent(icons.buildings.market.name, icons.buildings.market.library), icons.buildings.market.color);
+const sanctuaryIconWhite = createIconImage(getIconComponent(icons.buildings.sanctuary.name, icons.buildings.sanctuary.library), icons.buildings.sanctuary.color);
+const fortressIconWhite = createIconImage(getIconComponent(icons.buildings.fortress.name, icons.buildings.fortress.library), icons.buildings.fortress.color);
 
 let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
 
@@ -738,6 +743,20 @@ export default function App() {
       setInventory(inv);
     });
 
+    s.on('healing_events', (events: { x: number, y: number, radius: number }[]) => {
+      const now = Date.now();
+      events.forEach(ev => {
+        store.combatEffects.damageTexts.push({
+          x: ev.x,
+          y: ev.y - 40,
+          value: "HEALING",
+          time: now,
+          maxLifetime: 1000,
+          isHealing: true
+        } as any);
+      });
+    });
+
     return () => {
       s.disconnect();
     };
@@ -1408,7 +1427,14 @@ export default function App() {
           if (b.type === 'base') img = baseIconWhite;
           if (b.type === 'wall') img = wallIconWhite;
           if (b.type === 'turret') img = turretIconWhite;
-          if (b.type === 'outpost') img = outpostIconWhite;
+          if (b.type === 'outpost') {
+            img = outpostIconWhite;
+            if (b.subType === 'refinery') img = refineryIconWhite;
+            if (b.subType === 'guard_tower') img = guardTowerIconWhite;
+            if (b.subType === 'market') img = marketIconWhite;
+            if (b.subType === 'sanctuary') img = sanctuaryIconWhite;
+            if (b.subType === 'fortress') img = fortressIconWhite;
+          }
 
           if (img && img.complete && img.naturalWidth > 0) {
             const iconSize = b.type === 'base' ? 15 : (b.type === 'wall' ? 8 : (b.type === 'outpost' ? 15 : 11));
@@ -1761,22 +1787,24 @@ export default function App() {
           ctx.restore();
         });
 
-        // 2. Damage Texts
+        // 2. Damage and Healing Texts
         store.combatEffects.damageTexts = store.combatEffects.damageTexts.filter(dt => now - dt.time < dt.maxLifetime);
         store.combatEffects.damageTexts.forEach(dt => {
           const age = now - dt.time;
           const alpha = 1.0 - (age / dt.maxLifetime);
           const rise = (age / dt.maxLifetime) * 30; // floats up 30px
+          const isHealing = (dt as any).isHealing;
           
           ctx.save();
-          ctx.fillStyle = `rgba(239, 68, 68, ${alpha})`;
+          ctx.fillStyle = isHealing ? `rgba(16, 185, 129, ${alpha})` : `rgba(239, 68, 68, ${alpha})`;
           ctx.strokeStyle = `rgba(0, 0, 0, ${alpha * 0.8})`;
           ctx.lineWidth = 2;
           ctx.font = 'bold 16px Inter, monospace';
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
-          ctx.strokeText(`-${dt.value}`, dt.x, dt.y - rise);
-          ctx.fillText(`-${dt.value}`, dt.x, dt.y - rise);
+          const prefix = isHealing ? '' : '-';
+          ctx.strokeText(`${prefix}${dt.value}`, dt.x, dt.y - rise);
+          ctx.fillText(`${prefix}${dt.value}`, dt.x, dt.y - rise);
           ctx.restore();
         });
 
@@ -1937,6 +1965,24 @@ export default function App() {
               mctx.roundRect ? mctx.roundRect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2, bData.minimapCornerRadius) : mctx.rect(b.x - bSize, b.y - bSize, bSize * 2, bSize * 2);
               mctx.fill();
               mctx.stroke();
+            }
+
+            let img = null;
+            if (b.type === 'base') img = baseIconWhite;
+            if (b.type === 'wall') img = wallIconWhite;
+            if (b.type === 'turret') img = turretIconWhite;
+            if (b.type === 'outpost') {
+              img = outpostIconWhite;
+              if (b.subType === 'refinery') img = refineryIconWhite;
+              if (b.subType === 'guard_tower') img = guardTowerIconWhite;
+              if (b.subType === 'market') img = marketIconWhite;
+              if (b.subType === 'sanctuary') img = sanctuaryIconWhite;
+              if (b.subType === 'fortress') img = fortressIconWhite;
+            }
+
+            if (img && img.complete && img.naturalWidth > 0) {
+              const iconSize = bSize * 0.7;
+              mctx.drawImage(img, b.x - iconSize, b.y - iconSize, iconSize * 2, iconSize * 2);
             }
             mctx.restore();
           }

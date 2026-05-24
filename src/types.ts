@@ -32,6 +32,7 @@ export interface Building {
   captureProgress?: number;
   capturingPlayerId?: string | null;
   isConflict?: boolean;
+  subType?: "refinery" | "guard_tower" | "market" | "sanctuary" | "fortress";
 }
 
 export interface Unit {

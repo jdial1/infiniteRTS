@@ -9,7 +9,12 @@
     "wall": { "library": "gi", "name": "GiBrickWall", "color": "#ffffff" },
     "turret": { "library": "gi", "name": "GiStoneTower", "color": "#ffffff" },
     "miner": { "library": "gi", "name": "GiMining", "color": "#ffffff" },
-    "outpost": { "library": "gi", "name": "GiCastle", "color": "#ffffff" }
+    "outpost": { "library": "gi", "name": "GiCastle", "color": "#ffffff" },
+    "refinery": { "library": "gi", "name": "GiOilRefinery", "color": "#ffffff" },
+    "guard_tower": { "library": "gi", "name": "GiCrossedSwords", "color": "#ffffff" },
+    "market": { "library": "gi", "name": "GiShop", "color": "#ffffff" },
+    "sanctuary": { "library": "gi", "name": "GiHeartPlus", "color": "#ffffff" },
+    "fortress": { "library": "gi", "name": "GiFortress", "color": "#ffffff" }
   },
   "ui": {
     "help": { "library": "lucide", "name": "HelpCircle" },
