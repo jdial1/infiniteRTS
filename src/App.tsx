@@ -1,351 +1,36 @@
 import React, { useEffect, useRef, useState } from 'react';
-
 import { io, Socket } from 'socket.io-client';
 import { GameState, Player, ResourceNode, Building, MapZone } from './types';
-import * as GiIcons from 'react-icons/gi';
-import * as LucideIcons from 'lucide-react';
-
-import { renderToString } from 'react-dom/server';
-
 import { constants, buildings, upgrades, icons } from '../data';
-
-// Helper to get icon component by name and library
-const getIconComponent = (name: string, library: string) => {
-  if (library === 'gi') return (GiIcons as any)[name];
-  if (library === 'lucide') return (LucideIcons as any)[name];
-  return null;
-};
-
-const getMascot = (traits: string[]) => {
-  if (!traits || traits.length < 2) return null;
-  const sorted = [...traits].sort();
-  if (sorted.includes('speed') && sorted.includes('strength')) return icons.mascots.speed_strength;
-  if (sorted.includes('speed') && sorted.includes('cost')) return icons.mascots.speed_cost;
-  if (sorted.includes('strength') && sorted.includes('cost')) return icons.mascots.strength_cost;
-  return null;
-};
-
-const DynamicIcon = ({ name, library, ...props }: { name: string; library: string; [key: string]: any }) => {
-  const Icon = getIconComponent(name, library);
-  return Icon ? <Icon {...props} /> : null;
-};
-
-function createIconImage(Icon: any, color: string): HTMLImageElement {
-  const svgString = renderToString(<Icon color={color} size={32} />);
-  const withXmlns = svgString.includes('xmlns') ? svgString : svgString.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
-  const encoded = encodeURIComponent(withXmlns);
-  const dataUri = `data:image/svg+xml;charset=utf-8,${encoded}`;
-  const img = new Image();
-  img.src = dataUri;
-  return img;
-}
-
-const woodIconImg = createIconImage(getIconComponent(icons.resources.wood.name, icons.resources.wood.library), icons.resources.wood.color);
-const stoneIconImg = createIconImage(getIconComponent(icons.resources.stone.name, icons.resources.stone.library), icons.resources.stone.color);
-const goldIconImg = createIconImage(getIconComponent(icons.resources.gold.name, icons.resources.gold.library), icons.resources.gold.color);
-
-const baseIconWhite = createIconImage(getIconComponent(icons.buildings.base.name, icons.buildings.base.library), icons.buildings.base.color);
-const wallIconWhite = createIconImage(getIconComponent(icons.buildings.wall.name, icons.buildings.wall.library), icons.buildings.wall.color);
-const turretIconWhite = createIconImage(getIconComponent(icons.buildings.turret.name, icons.buildings.turret.library), icons.buildings.turret.color);
-const minerIconWhite = createIconImage(getIconComponent(icons.buildings.miner.name, icons.buildings.miner.library), icons.buildings.miner.color);
-const outpostIconWhite = createIconImage(getIconComponent(icons.buildings.outpost.name, icons.buildings.outpost.library), icons.buildings.outpost.color);
-const refineryIconWhite = createIconImage(getIconComponent(icons.buildings.refinery.name, icons.buildings.refinery.library), icons.buildings.refinery.color);
-const guardTowerIconWhite = createIconImage(getIconComponent(icons.buildings.guard_tower.name, icons.buildings.guard_tower.library), icons.buildings.guard_tower.color);
-const marketIconWhite = createIconImage(getIconComponent(icons.buildings.market.name, icons.buildings.market.library), icons.buildings.market.color);
-const sanctuaryIconWhite = createIconImage(getIconComponent(icons.buildings.sanctuary.name, icons.buildings.sanctuary.library), icons.buildings.sanctuary.color);
-const fortressIconWhite = createIconImage(getIconComponent(icons.buildings.fortress.name, icons.buildings.fortress.library), icons.buildings.fortress.color);
-
-let cachedRedHatchCanvas: HTMLCanvasElement | null = null;
-
-const hatchCanvasCache: Record<string, HTMLCanvasElement> = {};
-type Point = { x: number; y: number };
-
-function getVoronoiCell(site: Point, allSites: Point[], bounds: { minX: number; minY: number; maxX: number; maxY: number }): Point[] {
-  let cell = [
-    { x: bounds.minX, y: bounds.minY },
-    { x: bounds.maxX, y: bounds.minY },
-    { x: bounds.maxX, y: bounds.maxY },
-    { x: bounds.minX, y: bounds.maxY }
-  ];
-
-  for (const other of allSites) {
-    if (other.x === site.x && other.y === site.y) continue;
-
-    // Perpendicular bisector between site and other
-    const midX = (site.x + other.x) / 2;
-    const midY = (site.y + other.y) / 2;
-    const dx = other.x - site.x;
-    const dy = other.y - site.y;
-
-    // Normal vector pointing towards 'other'
-    // Half-plane is defined by: (p - mid) . d <= 0  (points closer to 'site')
-    // dx*(px - midX) + dy*(py - midY) <= 0
-
-    const nextCell: Point[] = [];
-    for (let i = 0; i < cell.length; i++) {
-      const p1 = cell[i];
-      const p2 = cell[(i + 1) % cell.length];
-
-      const in1 = dx * (p1.x - midX) + dy * (p1.y - midY) <= 0.001;
-      const in2 = dx * (p2.x - midX) + dy * (p2.y - midY) <= 0.001;
-
-      if (in1 && in2) {
-        nextCell.push(p2);
-      } else if (in1 && !in2) {
-        // Intersection
-        nextCell.push(intersect(p1, p2, midX, midY, dx, dy));
-      } else if (!in1 && in2) {
-        // Intersection and then p2
-        nextCell.push(intersect(p1, p2, midX, midY, dx, dy));
-        nextCell.push(p2);
-      }
-    }
-    cell = nextCell;
-    if (cell.length === 0) break;
-  }
-  return cell;
-}
-function getTerritoryPaths(userId: string, buildings: any, constants: any, voronoiBounds: any) {
-  const allSites = Object.values(buildings)
-    .filter((b: any) => b.type === 'base' || b.type === 'outpost')
-    .map((b: any) => ({
-      x: b.x,
-      y: b.y,
-      ownerId: b.ownerId,
-      radius: b.type === 'base' ? constants.BUILD_RANGE : 400
-    }));
-
-  const mySites = allSites.filter(s => s.ownerId === userId);
-  if (mySites.length === 0) return null;
-
-  const ownedOutposts = Object.values(buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
-  const playerBase = Object.values(buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
-  const OUTPOST_BUILD_RADIUS = 400;
-  const OUTPOST_SPACING = 600;
-
-  const path = new Path2D();
-  ownedOutposts.forEach(o => {
-    path.moveTo(o.x + OUTPOST_BUILD_RADIUS, o.y);
-    path.arc(o.x, o.y, OUTPOST_BUILD_RADIUS, 0, Math.PI * 2);
-  });
-  if (playerBase) {
-    path.moveTo(playerBase.x + constants.BUILD_RANGE, playerBase.y);
-    path.arc(playerBase.x, playerBase.y, constants.BUILD_RANGE, 0, Math.PI * 2);
-  }
-  for (let i = 0; i < ownedOutposts.length; i++) {
-    for (let j = i + 1; j < ownedOutposts.length; j++) {
-      const a = ownedOutposts[i], b = ownedOutposts[j];
-      const dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
-      if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
-        const minX = Math.min(a.x, b.x), minY = Math.min(a.y, b.y);
-        const maxX = Math.max(a.x, b.x), maxY = Math.max(a.y, b.y);
-        if (dx > dy) path.rect(minX, a.y - 200, maxX - minX, 400);
-        else path.rect(a.x - 200, minY, 400, maxY - minY);
-      }
-    }
-  }
-  ownedOutposts.forEach(o => {
-    const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
-    const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-    const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-    if (hasTR && hasBL && hasBR) path.rect(o.x, o.y, OUTPOST_SPACING, OUTPOST_SPACING);
-  });
-
-  const clipPath = new Path2D();
-  const conflictingEdgesPath = new Path2D();
-  const otherSites = allSites.filter(s => s.ownerId !== userId);
-
-  mySites.forEach(site => {
-    const cell = getVoronoiCell(site, allSites, voronoiBounds);
-    if (cell.length > 0) {
-      clipPath.moveTo(cell[0].x, cell[0].y);
-      for (let i = 1; i < cell.length; i++) {
-        const p1 = cell[i];
-        clipPath.lineTo(p1.x, p1.y);
-      }
-      clipPath.closePath();
-
-      for (let i = 0; i < cell.length; i++) {
-        const p1 = cell[i];
-        const p2 = cell[(i + 1) % cell.length];
-        const midP = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
-
-        const isSharedWithOther = otherSites.some(os => {
-          const dx = os.x - site.x;
-          const dy = os.y - site.y;
-          const d2 = dx*dx + dy*dy;
-          if (d2 < 1) return false;
-          const midX = (site.x + os.x) / 2;
-          const midY = (site.y + os.y) / 2;
-          const distToBisector = Math.abs(dx * (midP.x - midX) + dy * (midP.y - midY)) / Math.sqrt(d2);
-          return distToBisector < 0.1;
-        });
-
-        if (isSharedWithOther) {
-          conflictingEdgesPath.moveTo(p1.x, p1.y);
-          conflictingEdgesPath.lineTo(p2.x, p2.y);
-        }
-      }
-    }
-  });
-
-  return { path, clipPath, conflictingEdgesPath };
-}
-
-
-function intersect(p1: Point, p2: Point, midX: number, midY: number, dx: number, dy: number): Point {
-  // Line 1: p1 + t(p2 - p1)
-  // Line 2 (half-plane boundary): (p - mid) . d = 0
-  // (p1.x + t(p2.x - p1.x) - midX) * dx + (p1.y + t(p2.y - p1.y) - midY) * dy = 0
-  const v1x = p2.x - p1.x;
-  const v1y = p2.y - p1.y;
-  const denom = (dx * v1x + dy * v1y);
-  if (Math.abs(denom) < 0.0001) return p1;
-  const t = (dx * (midX - p1.x) + dy * (midY - p1.y)) / denom;
-  return { x: p1.x + t * v1x, y: p1.y + t * v1y };
-}
-
-function getHatchCanvas(color: string): HTMLCanvasElement {
-  if (!hatchCanvasCache[color]) {
-    const pCanvas = document.createElement('canvas');
-    pCanvas.width = 16;
-    pCanvas.height = 16;
-    const pCtx = pCanvas.getContext('2d')!;
-    pCtx.strokeStyle = color;
-    pCtx.lineWidth = 2;
-    pCtx.beginPath();
-    pCtx.moveTo(0, 16);
-    pCtx.lineTo(16, 0);
-    pCtx.stroke();
-    hatchCanvasCache[color] = pCanvas;
-  }
-  return hatchCanvasCache[color];
-}
-
-function getRedHatchCanvas(): HTMLCanvasElement {
-  if (!cachedRedHatchCanvas) {
-    const pCanvas = document.createElement('canvas');
-    pCanvas.width = 12;
-    pCanvas.height = 12;
-    const pCtx = pCanvas.getContext('2d');
-    if (pCtx) {
-      pCtx.strokeStyle = '#ef4444'; // Red lines for range hatch
-      pCtx.lineWidth = 1;
-      pCtx.beginPath();
-      pCtx.moveTo(0, 0);
-      pCtx.lineTo(12, 12);
-      pCtx.moveTo(12, 0);
-      pCtx.lineTo(0, 12);
-      pCtx.stroke();
-    }
-    cachedRedHatchCanvas = pCanvas;
-  }
-  return cachedRedHatchCanvas;
-}
-
-function drawTextAlongArc(ctx: CanvasRenderingContext2D, str: string, centerX: number, centerY: number, radius: number, angle: number) {
-  ctx.save();
-  ctx.translate(centerX, centerY);
-  ctx.rotate(angle);
-  
-  const metric = ctx.measureText(str);
-  // Estimate angle based on width to center text
-  const totalAngle = metric.width / radius;
-  ctx.rotate(-totalAngle / 2);
-  
-  for (let i = 0; i < str.length; i++) {
-    const char = str[i];
-    const charMetric = ctx.measureText(char);
-    const charAngle = charMetric.width / radius;
-    
-    ctx.rotate(charAngle / 2);
-    ctx.fillText(char, 0, -radius);
-    ctx.rotate(charAngle / 2);
-  }
-
-function isPointInTerritory(px: number, py: number, userId: string, gameState: GameState, constants: any) {
-  if (!gameState) return false;
-  // 1. Check Base (radius 450)
-  const playerBase = Object.values(gameState.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
-  if (playerBase) {
-    const dx = px - playerBase.x;
-    const dy = py - playerBase.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= constants.BUILD_RANGE) return true;
-  }
-
-  // 2. Check Outposts
-  const ownedOutposts = Object.values(gameState.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
-  const OUTPOST_BUILD_RADIUS = 400;
-  const OUTPOST_SPACING = 600;
-
-  for (const o of ownedOutposts) {
-    const dx = px - o.x;
-    const dy = py - o.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= OUTPOST_BUILD_RADIUS) return true;
-  }
-
-  // 3. Check Bridges (1D)
-  for (let i = 0; i < ownedOutposts.length; i++) {
-    for (let j = i + 1; j < ownedOutposts.length; j++) {
-      const a = ownedOutposts[i];
-      const b = ownedOutposts[j];
-
-      const dx = Math.abs(a.x - b.x);
-      const dy = Math.abs(a.y - b.y);
-
-      if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
-        // Adjacent
-        const minX = Math.min(a.x, b.x);
-        const maxX = Math.max(a.x, b.x);
-        const minY = Math.min(a.y, b.y);
-        const maxY = Math.max(a.y, b.y);
-
-        if (dx > dy) { // Horizontal bridge
-          if (px >= minX && px <= maxX && Math.abs(py - a.y) <= 200) return true;
-        } else { // Vertical bridge
-          if (py >= minY && py <= maxY && Math.abs(px - a.x) <= 200) return true;
-        }
-      }
-    }
-  }
-
-  // 4. Check 2D Squares
-  for (const o of ownedOutposts) {
-    const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
-    const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-    const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-
-    if (hasTR && hasBL && hasBR) {
-      if (px >= o.x && px <= o.x + OUTPOST_SPACING && py >= o.y && py <= o.y + OUTPOST_SPACING) return true;
-    }
-  }
-
-  return false;
-}
-
-
-  ctx.restore();
-}
-
-// A mutable store for fast canvas rendering without React re-renders
-class GameStore {
-  state: GameState | null = null;
-  me: Player | null = null;
-  inventory = { wood: 0, stone: 0, gold: 0 };
-  combatEffects: {
-    lines: { from: {x:number, y:number}, to: {x:number, y:number}, time: number, maxLifetime: number }[];
-    damageTexts: { x: number, y: number, value: number, time: number, maxLifetime: number }[];
-  } = { lines: [], damageTexts: [] };
-}
-export const store = new GameStore();
+import {
+  getMascot,
+  DynamicIcon,
+  woodIconImg,
+  stoneIconImg,
+  goldIconImg,
+  baseIconWhite,
+  wallIconWhite,
+  turretIconWhite,
+  minerIconWhite,
+  outpostIconWhite,
+  refineryIconWhite,
+  guardTowerIconWhite,
+  marketIconWhite,
+  sanctuaryIconWhite,
+  fortressIconWhite,
+  getIconComponent
+} from './utils/icons';
+import { getTerritoryPaths, isPointInTerritory } from './utils/geometry';
+import { getHatchCanvas, getRedHatchCanvas, drawTextAlongArc } from './utils/canvas';
+import { store } from './store/gameStore';
+import { useGameEngine } from './hooks/useGameEngine';
+import * as GiIcons from 'react-icons/gi';
 
 export default function App() {
   const [scene, setScene] = useState<'menu' | 'playing'>('menu');
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [socket, setSocket] = useState<Socket | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [isOffline, setIsOffline] = useState(!window.navigator.onLine);
   const [inventory, setInventory] = useState({ wood: 0, stone: 0, gold: 0 });
+  const { socket, setSocket, connected, setConnected, isOffline, calculateRates } = useGameEngine(inventory);
   
   // Camera state
   const camera = useRef({ x: 0, y: 0, zoom: 1 });
@@ -364,17 +49,6 @@ export default function App() {
   // UI state
   const [buildMode, setBuildMode] = useState<Building['type'] | null>(null);
   const [combatLogs, setCombatLogs] = useState<{ id: string; time: number; message: string; targetX: number; targetY: number }[]>([]);
-
-  useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
 
   useEffect(() => {
     // Clear old combat logs periodically
@@ -428,18 +102,6 @@ export default function App() {
   const resourceMaxAmounts = useRef<Record<string, number>>({});
 
   // Rate tracking state and refs
-  const prevInventory = useRef({ wood: 0, stone: 0, gold: 0 });
-  const collectionHistory = useRef<{ time: number; type: 'wood' | 'stone' | 'gold'; amount: number }[]>([]);
-  const gameStartTime = useRef(Date.now());
-  const hasLoadedInitialInventory = useRef(false);
-  const lastMeId = useRef<string | null>(null);
-
-  // Reset load flag if player ID changes (e.g. reconnect with new socket ID)
-  if (store.me?.id !== lastMeId.current) {
-    hasLoadedInitialInventory.current = false;
-    lastMeId.current = store.me?.id || null;
-  }
-
   const triggerZoomIndicator = (zoomVal: number) => {
     setZoomIndicator({ value: zoomVal, visible: true });
     if (zoomIndicatorTimer.current) {
@@ -457,71 +119,6 @@ export default function App() {
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (!store.me) {
-      prevInventory.current = { ...inventory };
-      return;
-    }
-    
-    // Smooth transition from initial state load
-    if (!hasLoadedInitialInventory.current) {
-      const meInv = store.me.inventory;
-      if (inventory.wood === meInv.wood && inventory.stone === meInv.stone && inventory.gold === meInv.gold) {
-        prevInventory.current = { ...inventory };
-        hasLoadedInitialInventory.current = true;
-        gameStartTime.current = Date.now();
-      }
-      return;
-    }
-
-    const now = Date.now();
-    const diffWood = inventory.wood - prevInventory.current.wood;
-    const diffStone = inventory.stone - prevInventory.current.stone;
-    const diffGold = inventory.gold - prevInventory.current.gold;
-
-    if (diffWood > 0) {
-      collectionHistory.current.push({ time: now, type: 'wood', amount: diffWood });
-    }
-    if (diffStone > 0) {
-      collectionHistory.current.push({ time: now, type: 'stone', amount: diffStone });
-    }
-    if (diffGold > 0) {
-      collectionHistory.current.push({ time: now, type: 'gold', amount: diffGold });
-    }
-
-    prevInventory.current = { ...inventory };
-  }, [inventory]);
-
-  // Compute rates on every render (and thus every 500ms HUD tick or inventory change)
-  const calculateRates = () => {
-    const now = Date.now();
-    const windowMs = 45000; // 45 second sliding window
-    const windowStart = now - windowMs;
-
-    collectionHistory.current = collectionHistory.current.filter(item => item.time >= windowStart);
-
-    let totalWood = 0;
-    let totalStone = 0;
-    let totalGold = 0;
-
-    for (const item of collectionHistory.current) {
-      if (item.type === 'wood') totalWood += item.amount;
-      else if (item.type === 'stone') totalStone += item.amount;
-      else if (item.type === 'gold') totalGold += item.amount;
-    }
-
-    const timeElapsedMs = Math.min(windowMs, now - gameStartTime.current);
-    const timeElapsedSeconds = Math.max(10, timeElapsedMs / 1000);
-    const scaleFactor = 60 / timeElapsedSeconds;
-
-    return {
-      wood: Math.round(totalWood * scaleFactor),
-      stone: Math.round(totalStone * scaleFactor),
-      gold: Math.round(totalGold * scaleFactor),
-    };
-  };
-
   const rates = calculateRates();
 
   // HUD Tick for updating non-react driven UI elements periodically
