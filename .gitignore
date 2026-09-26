@@ -9,3 +9,4 @@ coverage/
 !.env.production
 test-results/
 saves/
+.firebase/
