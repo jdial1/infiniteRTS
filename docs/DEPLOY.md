@@ -15,15 +15,14 @@ Clients never read or write Firestore directly; `firestore.rules` denies everyth
 
 You need the [Firebase CLI](https://firebase.google.com/docs/cli) (`npm i -g firebase-tools`) and the [gcloud CLI](https://cloud.google.com/sdk/docs/install), both logged in as you.
 
-1. **Create the project.** In the [Firebase console](https://console.firebase.google.com/), add a project (for example `infinite-rts`). Note its project ID.
+1. **Create the project.** Done: `infiniterts-6c5ab` (project number `346111674521`). `.firebaserc` points the Firebase CLI at it.
 2. **Upgrade to Blaze.** Cloud Run needs the pay-as-you-go plan. One small always-on instance is the main cost.
 3. **Enable Google sign-in.** Authentication → Sign-in method → Google → Enable. The `*.web.app` and `*.firebaseapp.com` domains are authorized by default. Add any custom domain under Authentication → Settings → Authorized domains.
 4. **Create the database.** Firestore Database → Create database → Native mode, in a region near your Cloud Run region.
-5. **Register a web app.** Project settings → Your apps → Web. Copy its config into `.env.production.local` (see `.env.example`). These values are public identifiers, not secrets.
+5. **Register a web app.** Done. Its config is committed in `.env.production`; these values are public identifiers, not secrets. Put any overrides in `.env.production.local`.
 6. **Point the CLIs at the project:**
    ```sh
-   export PROJECT=your-project-id
-   firebase use --add "$PROJECT"
+   export PROJECT=infiniterts-6c5ab
    gcloud config set project "$PROJECT"
    gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com firestore.googleapis.com
    ```
@@ -51,7 +50,7 @@ Why those flags:
 * **`--session-affinity --timeout 3600`:** websockets stay on the instance for up to an hour, and Socket.IO reconnects on its own after that.
 * **`--allow-unauthenticated`:** the service is public at the HTTP level; players are authenticated per socket by their Firebase ID token.
 
-Copy the service URL it prints into `VITE_GAME_SERVER_URL` in `.env.production.local`.
+It should print `https://infinite-rts-server-346111674521.us-central1.run.app`, which is the URL already set as `VITE_GAME_SERVER_URL` in `.env.production`. If you change the service name or region, or it prints a different URL, put that URL in `.env.production.local` before building the client.
 
 ## Deploy the client and rules (Firebase Hosting)
 
@@ -61,7 +60,7 @@ npm run build:client
 firebase deploy --only hosting,firestore:rules
 ```
 
-Open `https://$PROJECT.web.app`, sign in with Google, and you're on the map.
+Open https://infiniterts-6c5ab.web.app, sign in with Google, and you're on the map.
 
 ## Redeploying
 
@@ -72,6 +71,6 @@ Open `https://$PROJECT.web.app`, sign in with Google, and you're on the map.
 
 `npm run dev` still works without any of this. With no `FIREBASE_PROJECT_ID`, the server accepts guest ids and saves to `saves/world.json`. With no `VITE_FIREBASE_*` variables, the dev client plays as a local guest.
 
-To test real sign-in locally, put the web config in `.env.local` and start the server with `FIREBASE_PROJECT_ID=your-project-id npm run dev`. To keep using a local save file while doing that, add `WORLD_STORE=file`.
+To test real sign-in locally (`localhost` is an authorized domain by default), copy the four `VITE_FIREBASE_*` lines from `.env.production` into `.env.local`, leaving out `VITE_GAME_SERVER_URL` because the dev server serves the client itself. Then start the server with `FIREBASE_PROJECT_ID=infiniterts-6c5ab npm run dev`. To keep using a local save file while doing that, add `WORLD_STORE=file`.
 
 A production server (`NODE_ENV=production`) refuses to start without `FIREBASE_PROJECT_ID`, and a production client build without the Firebase config shows a "Sign-in is not configured" screen instead of the game.
