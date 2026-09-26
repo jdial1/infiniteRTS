@@ -1,0 +1,10 @@
+rules_version = '2';
+// Only the game server (Admin SDK, which bypasses these rules) reads or writes the world.
+// Clients never touch Firestore directly: fog and anti-cheat depend on it.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

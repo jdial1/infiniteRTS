@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { GameState, Player, ResourceNode, Building, MapZone, LedgerEntry, ScoreRow, RatesReport, Unit } from './types';
+import { watchSession, signInWithGoogle, signOutUser, firebaseConfigured, GAME_SERVER_URL, Session } from './firebase';
 import { planRequirement, planInstalment, demolishRefund, SCORE_PER_OUTPOST, SCORE_PER_PLAN_PHASE } from './rules';
 import { constants, buildings, upgrades, icons } from '../data';
 import {
@@ -157,26 +158,36 @@ export default function App() {
   const playersCount = playersList.length;
 
 
-  useEffect(() => {
-    // Only connect once
-    let userId = localStorage.getItem('render_game_user_id');
-    if (!userId) {
-      userId = crypto.randomUUID();
-      localStorage.setItem('render_game_user_id', userId);
-    }
+  // Who is playing: a Google account (or a local guest in development). undefined while resolving.
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [signInError, setSignInError] = useState<string | null>(null);
+  useEffect(() => watchSession(setSession), []);
 
-    const s = io('/', {
+  useEffect(() => {
+    // One connection per signed-in account; signing out tears it down
+    if (!session) return;
+    const userId = session.uid;
+
+    // The server verifies a fresh ID token on every (re)connection
+    const s = io(GAME_SERVER_URL, {
       path: '/socket.io',
-      auth: { userId }
+      auth: (cb) => {
+        session.getToken()
+          .then(token => cb({ token, userId }))
+          .catch(() => cb({ userId }));
+      }
     });
     setSocket(s);
 
     s.on('connect', () => setConnected(true));
     s.on('disconnect', () => setConnected(false));
+    s.on('connect_error', (err) => {
+      if (err.message === 'unauthorized') setSignInError('The server could not verify your sign-in. Try signing in again.');
+    });
 
     s.on('init', (initialState: GameState) => {
       store.state = initialState;
-      const me = initialState.players[userId as string];
+      const me = initialState.players[userId];
       if (me) {
         store.me = me;
         setInventory(me.inventory);
@@ -385,8 +396,11 @@ export default function App() {
 
     return () => {
       s.disconnect();
+      setSocket(null);
+      store.state = null;
+      store.me = null;
     };
-  }, []);
+  }, [session?.uid]);
 
   // Keyboard controls
   const keys = useRef<{ [key: string]: boolean }>({});
@@ -1741,6 +1755,41 @@ export default function App() {
     <div className="fixed inset-0 w-screen h-dvh overflow-hidden bg-gray-900 select-none text-slate-100">
       <canvas ref={canvasRef} className="absolute inset-0 z-0 cursor-crosshair touch-none" />
       
+      {/* --- Sign-in: required before the map --- */}
+      {!session && (
+        <div className="fixed inset-0 z-[200] flex flex-col items-center justify-center gap-6 p-6 bg-zinc-950 pointer-events-auto text-center">
+          <div>
+            <h1 className="font-display tracking-[0.2em] text-3xl sm:text-5xl text-[#f86565] uppercase leading-none mb-2">
+              <span className="mr-2">★</span>RED OCTOBER:
+            </h1>
+            <h2 className="text-gray-300 tracking-[0.3em] text-base sm:text-xl font-display uppercase">Overlord Command</h2>
+          </div>
+          {session === undefined ? (
+            <p className="text-xs text-zinc-500 font-display uppercase tracking-widest">Checking credentials…</p>
+          ) : firebaseConfigured ? (
+            <div className="flex flex-col items-center gap-3 w-full max-w-xs">
+              <p className="text-sm text-zinc-400 font-sans">Your commander, borders, and ledger follow your Google account.</p>
+              <button
+                onClick={() => {
+                  setSignInError(null);
+                  signInWithGoogle().catch(e => {
+                    if (e?.code !== 'auth/popup-closed-by-user') setSignInError('Sign-in failed. Check that pop-ups are allowed and try again.');
+                  });
+                }}
+                className="w-full metallic-button-selected text-white font-display uppercase tracking-widest py-3 px-4 rounded-sm text-sm active:scale-[0.98]"
+              >
+                Sign in with Google
+              </button>
+              {signInError && <p className="text-xs text-red-400 font-sans">{signInError}</p>}
+            </div>
+          ) : (
+            <p className="max-w-sm text-sm text-red-400 font-sans">
+              Sign-in is not configured for this build. Set the VITE_FIREBASE_* variables (see docs/DEPLOY.md) and rebuild.
+            </p>
+          )}
+        </div>
+      )}
+
       {/* --- Main Menu Overlay --- */}
       {scene === 'menu' && (
         <div className="fixed inset-0 z-50 flex flex-col items-center justify-between p-4 sm:p-8 bg-zinc-950/80 backdrop-blur-sm pointer-events-auto overflow-y-auto no-scrollbar">
@@ -1772,6 +1821,14 @@ export default function App() {
                 <div className="flex flex-col">
                   <span className="text-[10px] text-zinc-500 uppercase tracking-widest font-display">Commander ID</span>
                   <strong className="text-sm font-display tracking-widest uppercase text-gray-200">{store.me.name || store.me.id.substring(0,6)}</strong>
+                  {session && !session.guest && (
+                    <button
+                      onClick={() => { signOutUser(); setScene('menu'); }}
+                      className="text-left text-[10px] text-zinc-500 hover:text-zinc-300 font-sans underline"
+                    >
+                      {session.displayName ? `${session.displayName} · ` : ''}Sign out
+                    </button>
+                  )}
                 </div>
               </div>
               <div className="flex flex-col items-end">

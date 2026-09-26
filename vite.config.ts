@@ -14,6 +14,8 @@ export default defineConfig(() => {
         includeAssets: ['favicon.svg', 'icon.svg'],
         workbox: {
           maximumFileSizeToCacheInBytes: 10 * 1024 * 1024, // 10MB
+          // Firebase Auth's handler pages must reach the network, never the cached app shell
+          navigateFallbackDenylist: [/^\/__\//],
         },
         manifest: {
           name: 'Red October',

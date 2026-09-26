@@ -19,6 +19,8 @@ View your app in AI Studio: https://ai.studio/apps/82fadd16-361b-4256-8b13-267ed
 3. Run the app:
    `npm run dev`
 
-The world is saved to `saves/world.json` every 30 seconds and on shutdown, and reloaded on start. Set `WORLD_FILE` to use a different path; delete the file to start a fresh world.
+Locally, with no Firebase configuration, you play as a guest and the world is saved to `saves/world.json` every 30 seconds and on shutdown (set `WORLD_FILE` to use a different path; delete the file to start a fresh world).
+
+In production, players sign in with Google (Firebase Authentication), the client is served from Firebase Hosting, the authoritative game server runs on Cloud Run, and the world is saved in Cloud Firestore. See [docs/DEPLOY.md](docs/DEPLOY.md) for setup and deploy commands, and `.env.example` for every variable.
 
 The game's design soul, and why its systems work the way they do, is in [docs/SOUL.md](docs/SOUL.md).

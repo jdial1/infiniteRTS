@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -9,7 +10,8 @@ import { GameState, ResourceNode, Building, Player, MapZone, Unit, LedgerEntry, 
 import { constants, buildings, upgrades } from './data';
 import { isPointInTerritory } from './src/utils/geometry';
 import { planRequirement, planInstalment, scoreFor, heroMaxSpeed, visionCircles, canSee, VisionCircle, demolishRefund, maxHealthOf, desiredLabour, RESOURCE_TYPES } from './src/rules';
-import { loadWorld, saveWorld, WorldSnapshot } from './server/persistence';
+import { createWorldStore, WorldSnapshot } from './server/persistence';
+import { createIdentifier } from './server/auth';
 
 // Initialize game state
 const gameState: GameState = {
@@ -33,7 +35,6 @@ const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
 const VISION_SYNC_TICKS = 5; // twice a second
 const STANDINGS_TICKS = 20; // every two seconds
 const SAVE_INTERVAL_MS = 30000;
-const WORLD_FILE = process.env.WORLD_FILE || path.join(process.cwd(), 'saves', 'world.json');
 
 // Workers within this distance of one of their owner's walls are on a supply road
 const SUPPLY_ROAD_RANGE = 150;
@@ -118,7 +119,8 @@ async function startServer() {
   const httpServer = createServer(app);
 
   const io = new Server(httpServer, {
-    cors: { origin: '*' } // Be permissive for dev
+    // The client is served from Firebase Hosting; list its origins in ALLOWED_ORIGINS (comma-separated)
+    cors: { origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : '*' }
   });
 
 
@@ -454,13 +456,17 @@ function generateChunk(cx: number, cy: number) {
     res.json({ status: 'ok' });
   });
 
+  // Every connection proves who it is before it reaches the game: a verified Firebase ID token
+  // (Google sign-in), or a guest id when running locally without a Firebase project
+  const identify = createIdentifier();
+  io.use((socket, next) => {
+    identify(socket.handshake.auth)
+      .then(uid => { socket.data.userId = uid; next(); })
+      .catch(() => next(new Error('unauthorized')));
+  });
+
   io.on('connection', (socket) => {
-    const userId = socket.handshake.auth.userId;
-    if (!userId) {
-      console.error('Connection rejected: No userId provided');
-      socket.disconnect();
-      return;
-    }
+    const userId: string = socket.data.userId;
 
     console.log(`Player connected: ${socket.id} (User: ${userId})`);
 
@@ -1239,7 +1245,12 @@ function generateChunk(cx: number, cy: number) {
     ledgers: [...ledgers],
     lastSeenAt: [...lastSeenAt],
   });
-  const saved = loadWorld(WORLD_FILE);
+  const worldStore = createWorldStore();
+  const saved = await worldStore.load().catch(e => {
+    // Refuse to start over a world we couldn't read, rather than overwrite it with an empty one
+    console.error(`Could not load the world from ${worldStore.describe}:`, e);
+    process.exit(1);
+  });
   if (saved) {
     Object.assign(gameState, saved.gameState);
     saved.generatedChunks.forEach(k => generatedChunks.add(k));
@@ -1255,14 +1266,24 @@ function generateChunk(cx: number, cy: number) {
     // Everyone was away while the server was down
     const now = Date.now();
     Object.keys(gameState.players).forEach(id => { if (!lastSeenAt.has(id)) lastSeenAt.set(id, now); });
-    console.log(`Loaded world from ${WORLD_FILE}: ${Object.keys(gameState.players).length} players, ${Object.keys(gameState.buildings).length} buildings`);
+    console.log(`Loaded world from ${worldStore.describe}: ${Object.keys(gameState.players).length} players, ${Object.keys(gameState.buildings).length} buildings`);
   }
-  setInterval(() => saveWorld(WORLD_FILE, snapshot()), SAVE_INTERVAL_MS);
+  let saving: Promise<void> | null = null;
+  const saveNow = () => {
+    if (saving) return saving;
+    saving = worldStore.save(snapshot())
+      .catch(e => console.error(`Could not save the world to ${worldStore.describe}:`, e))
+      .finally(() => { saving = null; });
+    return saving;
+  };
+  setInterval(saveNow, SAVE_INTERVAL_MS);
+  // Cloud Run sends SIGTERM and allows a few seconds before stopping the container
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.once(signal, () => {
+    process.once(signal, async () => {
       const now = Date.now();
       for (const id of userToSocket.keys()) lastSeenAt.set(id, now);
-      saveWorld(WORLD_FILE, snapshot());
+      if (saving) await saving;
+      await saveNow();
       process.exit(0);
     });
   }
@@ -1274,7 +1295,8 @@ function generateChunk(cx: number, cy: number) {
       appType: 'spa',
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))) {
+    // Serve a bundled client when one is present; on Cloud Run the client lives on Firebase Hosting instead
     app.use(express.static(path.join(process.cwd(), 'dist')));
     app.get('*', (req, res) => {
       res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));

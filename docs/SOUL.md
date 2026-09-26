@@ -68,7 +68,7 @@ This game's design soul is defined in the [game-souls](https://github.com/jdial1
 * **Standings.** Computed on the server: 100 per outpost held, plus 150 per Plan phase fulfilled. Walls, workers, upgrades, and stockpiles score nothing. "Locate" only works for players you can see.
 * **Demolish.** A tool in Structures. It refunds what you paid, scaled by remaining health: full while undamaged, so redesigning is free, but a burning building can't be sold to escape a rival. The cursor shows the refund before you commit.
 * **Rates.** The server logs every delivery. The resource bar shows income per minute, and the worker panel lists each depot's last-minute deliveries; click one to jump to it.
-* **Persistence.** The world is saved to `saves/world.json` every 30 s and on shutdown (override the path with `WORLD_FILE`), and it's reloaded at start. Ledgers and last-seen times are saved too, so away reports stay accurate across restarts.
+* **Persistence.** The world is saved every 30 s and on shutdown, and reloaded at start: to Cloud Firestore in production, to `saves/world.json` locally. Ledgers and last-seen times are saved too, so away reports stay accurate across restarts.
 * **Setting.** Soviet-industrial throughout: the Plan, the Commissariat report, Directives, and upgrade names such as Shock Brigades, Heavy Barrows, and Central Planning. The help text describes the systems as they are.
 
 ## Cost warning
@@ -76,4 +76,4 @@ This game's design soul is defined in the [game-souls](https://github.com/jdial1
 * **Losses while away are deliberate.** The ledger explains them; it doesn't prevent them. Absent heroes no longer hold ground. Whether absent players also need a protection window is a question for the first playtest.
 * **Neighbours are required.** Watchful Calm needs rivals at the border. An endless map with a small population will feel like Assembly without its second half.
 * **Scale.** Vision is computed per player twice a second, against every building and unit. That's fine for dozens of players. Hundreds will need spatial indexing.
-* **Persistence is a single JSON file.** It's enough for one server process; a real deployment wants a database.
+* **One world, one process.** The world lives in one Cloud Run instance's memory and is saved to Firestore every 30 s, so a crash can lose up to 30 s of play. Two instances would be two worlds; scaling out means sharding the map across servers.
