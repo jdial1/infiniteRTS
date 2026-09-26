@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "346111674521",
+    "project_id": "infiniterts-6c5ab",
+    "storage_bucket": "infiniterts-6c5ab.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:346111674521:android:278984d8c307d1e90b1008",
+        "android_client_info": {
+          "package_name": "io.github.jdial1.infiniterts"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "346111674521-98skbhffg2td3vsuegps900ronrspgeg.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "io.github.jdial1.infiniterts",
+            "certificate_hash": "a3301af05d52f9e28b02d04e3dc8ec2021069462"
+          }
+        },
+        {
+          "client_id": "346111674521-gg9u3hhl7dvv3r6ikefpod6vdnsomsmk.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDLrxP5turzrBbK59cMEKpRwdt7F7WBkCQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "346111674521-gg9u3hhl7dvv3r6ikefpod6vdnsomsmk.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

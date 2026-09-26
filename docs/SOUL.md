@@ -71,6 +71,10 @@ This game's design soul is defined in the [game-souls](https://github.com/jdial1
 * **Persistence.** The world is saved every 30 s and on shutdown, and reloaded at start: to Cloud Firestore in production, to `saves/world.json` locally. Ledgers and last-seen times are saved too, so away reports stay accurate across restarts.
 * **Setting.** Soviet-industrial throughout: the Plan, the Commissariat report, Directives, and upgrade names such as Shock Brigades, Heavy Barrows, and Central Planning. The help text describes the systems as they are.
 
+### Later: the Android client
+
+The React web client was replaced by a native Android app (`android/`, Kotlin and Jetpack Compose). The soul carries over unchanged, because it lives on the server: movement authority, vision, Standing Orders, the Plan, standings, and the ledger are all server-side. The app ports the shared rules (`rules/Rules.kt`), so its costs, refunds, and Plan quotas are the server's numbers. It draws fog with the same vision circles the server uses to decide what it sends. On a phone the demolish tool asks for confirmation and shows the refund in a dialog, instead of on a cursor.
+
 ## Cost warning
 
 * **Losses while away are deliberate.** The ledger explains them; it doesn't prevent them. Absent heroes no longer hold ground. Whether absent players also need a protection window is a question for the first playtest.

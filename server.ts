@@ -1,9 +1,6 @@
 import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import path from 'path';
-import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
 
 import { GameState, ResourceNode, Building, Player, MapZone, Unit, LedgerEntry, ScoreRow, RatesReport, DepotRate } from './src/types'; // Types
@@ -119,7 +116,8 @@ async function startServer() {
   const httpServer = createServer(app);
 
   const io = new Server(httpServer, {
-    // The client is served from Firebase Hosting; list its origins in ALLOWED_ORIGINS (comma-separated)
+    // CORS only applies to browsers; the Android client sends no Origin. Keep ALLOWED_ORIGINS (comma-separated)
+    // for any browser tool that needs to connect.
     cors: { origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : '*' }
   });
 
@@ -1285,21 +1283,6 @@ function generateChunk(cx: number, cy: number) {
       if (saving) await saving;
       await saveNow();
       process.exit(0);
-    });
-  }
-
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else if (fs.existsSync(path.join(process.cwd(), 'dist', 'index.html'))) {
-    // Serve a bundled client when one is present; on Cloud Run the client lives on Firebase Hosting instead
-    app.use(express.static(path.join(process.cwd(), 'dist')));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(process.cwd(), 'dist', 'index.html'));
     });
   }
 

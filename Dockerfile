@@ -1,11 +1,11 @@
-# The authoritative game server, for Cloud Run. The client is deployed separately to Firebase Hosting.
+# The authoritative game server, for Cloud Run. The client is the Android app in android/.
 FROM node:22-slim AS build
 WORKDIR /app
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npm run build:server
+RUN npm run build
 
 FROM node:22-slim
 WORKDIR /app

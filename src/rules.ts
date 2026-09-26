@@ -1,4 +1,4 @@
-// Game rules shared by the server and the client, so every number the UI shows is the number the server uses.
+// Game rules shared by the server and the Android client (android/.../rules/Rules.kt ports them), so every number the app shows is the number the server uses.
 import { Building, GameState, Player, ResourceNode } from './types';
 import { buildings, constants } from '../data';
 
