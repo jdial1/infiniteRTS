@@ -5,7 +5,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
 
-import { GameState, ResourceNode, Building, Player, MapZone, Unit } from './src/types'; // Types
+import { GameState, ResourceNode, Building, Player, MapZone, Unit, LedgerEntry } from './src/types'; // Types
 import { constants, buildings, upgrades } from './data';
 
 // Initialize game state
@@ -27,11 +27,23 @@ let totalOutpostsGenerated = 0;
 const chunkData = new Map<string, { resources: ResourceNode[], zones: MapZone[] }>();
 const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
 
+// Workers within this distance of one of their owner's walls are on a supply road
+const SUPPLY_ROAD_RANGE = 150;
+
+// Income only ever arrives with a worker. Where the worker unloads decides what the load is worth.
+function deliveryMultiplier(player: Player, dropoff: Building, type: ResourceNode['type']): number {
+  let multiplier = 1;
+  if (dropoff.type === 'base') multiplier += (player.upgrades?.base_depot || 0) * 0.05;
+  if (dropoff.type === 'outpost' && dropoff.subType === 'refinery' && type === 'gold') multiplier += 0.5;
+  if (dropoff.type === 'outpost' && dropoff.subType === 'market' && type !== 'gold') multiplier += 0.25;
+  return multiplier;
+}
+
 
 
 function isPointInTerritory(px: number, py: number, userId: string, gameState: any, constants: any) {
   // 1. Check Base (radius 450)
-  const playerBase = Object.values(gameState.buildings).find((b: any) => b.ownerId === userId && b.type === 'base');
+  const playerBase = Object.values(gameState.buildings).find((b: any) => b.ownerId === userId && b.type === 'base') as any;
   if (playerBase) {
     const dx = px - playerBase.x;
     const dy = py - playerBase.y;
@@ -274,6 +286,27 @@ function generateChunk(cx: number, cy: number) {
   const socketToUser = new Map<string, string>();
   const userToSocket = new Map<string, string>();
 
+  // The ledger: every change to a player's map, written down so a loss always has a receipt,
+  // including the ones that happen while the player is away.
+  const LEDGER_LIMIT = 50;
+  const ledgers = new Map<string, LedgerEntry[]>();
+  const lastSeenAt = new Map<string, number>();
+
+  const playerName = (id: string) => gameState.players[id]?.name || 'An unknown commander';
+  const buildingLabel = (b: Building) =>
+    b.type === 'outpost' ? `${b.subType ? b.subType.replace('_', ' ') + ' ' : ''}outpost` : b.type;
+
+  function recordLedger(playerId: string, kind: LedgerEntry['kind'], text: string, x: number, y: number) {
+    if (!gameState.players[playerId]) return;
+    const entry: LedgerEntry = { id: uuidv4(), time: Date.now(), kind, text, x: Math.round(x), y: Math.round(y) };
+    const entries = ledgers.get(playerId) || [];
+    entries.push(entry);
+    if (entries.length > LEDGER_LIMIT) entries.splice(0, entries.length - LEDGER_LIMIT);
+    ledgers.set(playerId, entries);
+    const sId = userToSocket.get(playerId);
+    if (sId) io.to(sId).emit('ledger_entry', entry);
+  }
+
   // API Route
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
@@ -337,6 +370,7 @@ function generateChunk(cx: number, cy: number) {
       resources: {}
     };
     socket.emit('init', initState);
+    socket.emit('ledger_history', { entries: ledgers.get(userId) || [], lastSeen: lastSeenAt.get(userId) ?? null });
 
     socket.on('select_traits', (traits: ('speed' | 'strength' | 'cost')[]) => {
       const player = gameState.players[userId];
@@ -512,6 +546,8 @@ function generateChunk(cx: number, cy: number) {
       }
 
       const currentLvl = player.upgrades[data.upgradeId] || 0;
+      const maxLevel = (upgradeMetadata as any).maxLevel;
+      if (maxLevel !== undefined && currentLvl >= maxLevel) return;
       
       // Cost factor scales with 1.5x of the last cost
       const baseCost = upgradeMetadata.baseCost;
@@ -616,6 +652,7 @@ function generateChunk(cx: number, cy: number) {
       socketToUser.delete(socket.id);
       if (userToSocket.get(userId) === socket.id) {
         userToSocket.delete(userId);
+        lastSeenAt.set(userId, Date.now());
       }
       io.emit('player_left', userId);
     });
@@ -628,64 +665,6 @@ function generateChunk(cx: number, cy: number) {
     const dt = 1 / TICK_RATE;
     ticksCount++;
     
-    // Process passive upgrade resource generation in intervals
-    if (ticksCount % constants.PASSIVE_INCOME_INTERVAL_TICKS === 0) { // Every 2 seconds
-      Object.values(gameState.players).forEach(p => {
-        let updated = false;
-        
-        // 1. Base Tax Income
-        const baseTaxLvl = p.upgrades?.base_tax || 0;
-        if (baseTaxLvl > 0) {
-          const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === p.id && b.type === 'base');
-          if (hasBase) {
-            p.inventory.wood += baseTaxLvl * 1;
-            p.inventory.stone += baseTaxLvl * 1;
-            p.inventory.gold += baseTaxLvl * 1;
-            updated = true;
-          }
-        }
-        
-        // 2. Wall Solar Generation
-        const wallSolarLvl = p.upgrades?.wall_solar || 0;
-        if (wallSolarLvl > 0) {
-          const wallCount = Object.values(gameState.buildings).filter(b => b.ownerId === p.id && b.type === 'wall').length;
-          if (wallCount > 0) {
-            p.inventory.wood += wallSolarLvl * wallCount * 1;
-            p.inventory.stone += wallSolarLvl * wallCount * 1;
-            updated = true;
-          }
-        }
-
-        if (updated) {
-          const sId = userToSocket.get(p.id);
-          if (sId) io.to(sId).emit('inventory_updated', p.inventory);
-        }
-      });
-    }
-
-    if (ticksCount % constants.TURRET_COLLECTOR_INTERVAL_TICKS === 0) { // Every 5 seconds
-      Object.values(gameState.players).forEach(p => {
-        let updated = false;
-        
-        // 3. Turret Collectors
-        const turretCollectorLvl = p.upgrades?.turret_collector || 0;
-        if (turretCollectorLvl > 0) {
-          const turretCount = Object.values(gameState.buildings).filter(b => b.ownerId === p.id && b.type === 'turret').length;
-          if (turretCount > 0) {
-            p.inventory.wood += turretCollectorLvl * turretCount * 1;
-            p.inventory.stone += turretCollectorLvl * turretCount * 1;
-            p.inventory.gold += turretCollectorLvl * turretCount * 1;
-            updated = true;
-          }
-        }
-
-        if (updated) {
-          const sId = userToSocket.get(p.id);
-          if (sId) io.to(sId).emit('inventory_updated', p.inventory);
-        }
-      });
-    }
-
     let combatEvents: { from: {x:number, y:number, id:string}, to: {x:number, y:number, id:string}, damage: number }[] = [];
 
     // Turret and Guard Tower attacking
@@ -719,6 +698,9 @@ function generateChunk(cx: number, cy: number) {
             if (target.health <= 0) {
               delete gameState.buildings[target.id];
               io.emit('building_destroyed', target.id);
+              const shooter = isGuardTower ? 'guard tower' : 'turret';
+              recordLedger(target.ownerId, 'lost', `${playerName(b.ownerId)}'s ${shooter} destroyed your ${buildingLabel(target)}.`, target.x, target.y);
+              recordLedger(b.ownerId, 'gained', `Your ${shooter} destroyed ${playerName(target.ownerId)}'s ${buildingLabel(target)}.`, target.x, target.y);
             } else {
               io.emit('building_updated', target);
             }
@@ -774,6 +756,7 @@ function generateChunk(cx: number, cy: number) {
               if (b.captureProgress >= 100) {
                 b.captureProgress = 100;
                 b.ownerId = capturerId;
+                recordLedger(capturerId, 'gained', `You took a neutral ${buildingLabel(b)}.`, b.x, b.y);
               }
             }
           } else if (b.ownerId === capturerId) {
@@ -783,6 +766,8 @@ function generateChunk(cx: number, cy: number) {
             b.captureProgress = Math.max(0, (b.captureProgress || 0) - captureSpeed);
             if (b.captureProgress <= 0) {
               b.captureProgress = 0;
+              recordLedger(b.ownerId, 'lost', `${playerName(capturerId)} neutralized your ${buildingLabel(b)}.`, b.x, b.y);
+              recordLedger(capturerId, 'gained', `You neutralized ${playerName(b.ownerId)}'s ${buildingLabel(b)}.`, b.x, b.y);
               b.ownerId = 'neutral';
             }
           }
@@ -793,29 +778,6 @@ function generateChunk(cx: number, cy: number) {
         }
       }
     });
-
-    // Outpost Passive Income (Refinery, Market) - Every 5 seconds
-    if (ticksCount % 50 === 0) {
-      const inventoryUpdates: Record<string, any> = {};
-      Object.values(gameState.buildings).forEach(b => {
-        if (b.type === 'outpost' && b.ownerId !== 'neutral') {
-          const p = gameState.players[b.ownerId];
-          if (!p) return;
-          if (b.subType === 'refinery') {
-            p.inventory.gold += 1;
-            inventoryUpdates[p.id] = p.inventory;
-          } else if (b.subType === 'market') {
-            p.inventory.wood += 1;
-            p.inventory.stone += 1;
-            inventoryUpdates[p.id] = p.inventory;
-          }
-        }
-      });
-      for (const pId in inventoryUpdates) {
-        const sId = userToSocket.get(pId);
-        if (sId) io.to(sId).emit('inventory_updated', inventoryUpdates[pId]);
-      }
-    }
 
     // Sanctuary Healing - Every 5 seconds
     if (ticksCount % 50 === 0) {
@@ -852,12 +814,20 @@ function generateChunk(cx: number, cy: number) {
 
     const positions = Object.values(gameState.players).map(p => ({id: p.id, x: p.x, y: p.y}));
     const unitPositions = Object.values(gameState.units).map(u => ({
-      id: u.id, x: u.x, y: u.y, state: u.state, targetId: u.targetId, inventory: u.inventory, capacity: u.capacity
+      id: u.id, x: u.x, y: u.y, state: u.state, targetId: u.targetId, inventory: u.inventory, capacity: u.capacity, stall: u.stall ?? null
     }));
     io.emit('state_tick', { players: positions, units: unitPositions });
     
     let resourceUpdates: ResourceNode[] = [];
     let inventoryUpdates: Record<string, Player['inventory']> = {};
+
+    const wallsByOwner = new Map<string, Building[]>();
+    Object.values(gameState.buildings).forEach(b => {
+      if (b.type !== 'wall') return;
+      const list = wallsByOwner.get(b.ownerId) || [];
+      list.push(b);
+      wallsByOwner.set(b.ownerId, list);
+    });
 
     Object.values(gameState.units).forEach(u => {
        if (u.type === 'miner') {
@@ -867,10 +837,18 @@ function generateChunk(cx: number, cy: number) {
          const hasSpeedTrait = p.traits.includes('speed');
          const minerSpeedLvl = p.upgrades?.miner_speed || 0;
          const traitSpeedLvl = p.upgrades?.trait_speed_upg || 0;
-         const MINER_SPEED = ((hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 2)) * (1 + traitSpeedLvl * 0.01);
+         const roadsLvl = p.upgrades?.wall_roads || 0;
+         const onRoad = roadsLvl > 0 && (wallsByOwner.get(p.id) || []).some(w =>
+           Math.abs(w.x - u.x) <= SUPPLY_ROAD_RANGE && Math.abs(w.y - u.y) <= SUPPLY_ROAD_RANGE &&
+           Math.hypot(w.x - u.x, w.y - u.y) <= SUPPLY_ROAD_RANGE);
+         const roadMultiplier = onRoad ? 1 + roadsLvl * 0.1 : 1;
+         const MINER_SPEED = ((hasSpeedTrait ? constants.MINER_SPEED_BOOST : constants.MINER_SPEED) + (minerSpeedLvl * 2)) * (1 + traitSpeedLvl * 0.01) * roadMultiplier;
          
          if (u.state === 'idle') {
-            if (!u.assignedResource) return;
+            if (!u.assignedResource) {
+              u.stall = null;
+              return;
+            }
             let nearestRes = null;
             let minDist = Infinity;
             for (const rId in gameState.resources) {
@@ -879,7 +857,8 @@ function generateChunk(cx: number, cy: number) {
               const dx = r.x - u.x;
               const dy = r.y - u.y;
               const dist = Math.sqrt(dx*dx + dy*dy);
-              if (dist < minDist) {
+              // The territory check is the expensive one, so only run it on a closer candidate
+              if (dist < minDist && isPointInValidMiningArea(r.x, r.y, u.ownerId, gameState, constants)) {
                 minDist = dist;
                 nearestRes = rId;
               }
@@ -887,6 +866,9 @@ function generateChunk(cx: number, cy: number) {
             if (nearestRes) {
               u.targetId = nearestRes;
               u.state = 'moving_to_resource';
+              u.stall = null;
+            } else {
+              u.stall = `No ${u.assignedResource} left inside your borders`;
             }
          } else if (u.state === 'moving_to_resource') {
             const r = gameState.resources[u.targetId!];
@@ -949,8 +931,9 @@ function generateChunk(cx: number, cy: number) {
               u.state = 'returning';
             }
          } else if (u.state === 'returning') {
+            const hasForwardDepots = (p.upgrades?.turret_depot || 0) > 0;
             const validDropoffs = Object.values(gameState.buildings).filter(b =>
-              b.ownerId === u.ownerId && (b.type === 'base' || b.type === 'outpost')
+              b.ownerId === u.ownerId && (b.type === 'base' || b.type === 'outpost' || (hasForwardDepots && b.type === 'turret'))
             );
 
             let nearestDropoff = null;
@@ -967,9 +950,12 @@ function generateChunk(cx: number, cy: number) {
             });
 
             if (!nearestDropoff) {
+              u.stall = 'No depot to unload at';
               u.state = 'idle';
               return;
             }
+            u.stall = null;
+            const dropoff = nearestDropoff as Building;
 
             const dx = nearestDropoff.x - u.x;
             const dy = nearestDropoff.y - u.y;
@@ -977,7 +963,7 @@ function generateChunk(cx: number, cy: number) {
 
             if (dist < 30) {
               if (u.inventory.type) {
-                p.inventory[u.inventory.type] += u.inventory.amount;
+                p.inventory[u.inventory.type] += Math.round(u.inventory.amount * deliveryMultiplier(p, dropoff, u.inventory.type));
                 inventoryUpdates[p.id] = p.inventory;
               }
               u.inventory = { type: null, amount: 0 };

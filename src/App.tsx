@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { GameState, Player, ResourceNode, Building, MapZone } from './types';
+import { GameState, Player, ResourceNode, Building, MapZone, LedgerEntry } from './types';
 import { constants, buildings, upgrades, icons } from '../data';
 import {
   getMascot,
@@ -48,7 +48,8 @@ export default function App() {
 
   // UI state
   const [buildMode, setBuildMode] = useState<Building['type'] | null>(null);
-  const [combatLogs, setCombatLogs] = useState<{ id: string; time: number; message: string; targetX: number; targetY: number }[]>([]);
+  const [combatLogs, setCombatLogs] = useState<{ id: string; time: number; message: string; targetX: number; targetY: number; tone: 'lost' | 'gained' }[]>([]);
+  const [awayReport, setAwayReport] = useState<LedgerEntry[] | null>(null);
 
   useEffect(() => {
     // Clear old combat logs periodically
@@ -244,7 +245,7 @@ export default function App() {
       }
     });
 
-    s.on('state_tick', (data: { players: {id: string, x: number, y: number}[], units: {id: string, x: number, y: number, state: string, inventory?: any, capacity?: number}[] }) => {
+    s.on('state_tick', (data: { players: {id: string, x: number, y: number}[], units: {id: string, x: number, y: number, state: string, inventory?: any, capacity?: number, stall?: string | null}[] }) => {
       if (!store.state) return;
       for (const p of data.players) {
         if (store.state.players[p.id]) {
@@ -265,6 +266,7 @@ export default function App() {
           if (u.capacity !== undefined) {
             store.state.units[u.id].capacity = u.capacity;
           }
+          store.state.units[u.id].stall = u.stall ?? null;
         }
       }
     });
@@ -283,7 +285,8 @@ export default function App() {
 
     s.on('combat_events', (events: { from: {x:number, y:number, id:string}, to: {x:number, y:number, id:string}, damage: number }[]) => {
       const now = Date.now();
-      const newLogs: { id: string; time: number; message: string; targetX: number; targetY: number }[] = [];
+      const newLogs: { id: string; time: number; message: string; targetX: number; targetY: number; tone: 'lost' | 'gained' }[] = [];
+      const nameOf = (id?: string) => (id && store.state?.players[id]?.name) || 'Unknown';
       
       events.forEach(ev => {
         store.combatEffects.lines.push({
@@ -299,13 +302,17 @@ export default function App() {
           time: now,
           maxLifetime: 800
         });
-        newLogs.push({
-          id: Math.random().toString(),
-          time: now,
-          message: `Turret attack hit for ${ev.damage} damage!`,
-          targetX: ev.to.x,
-          targetY: ev.to.y
-        });
+        // The feed is a receipt for this player's fights only; everyone else's are drawn on the map
+        const shooter = store.state?.buildings[ev.from.id];
+        const target = store.state?.buildings[ev.to.id];
+        if (!shooter || !target) return;
+        if (target.ownerId === userId) {
+          newLogs.push({ id: Math.random().toString(), time: now, tone: 'lost', targetX: ev.to.x, targetY: ev.to.y,
+            message: `${nameOf(shooter.ownerId)}'s ${shooter.type === 'turret' ? 'turret' : 'guard tower'} hit your ${target.type} (-${ev.damage})` });
+        } else if (shooter.ownerId === userId) {
+          newLogs.push({ id: Math.random().toString(), time: now, tone: 'gained', targetX: ev.to.x, targetY: ev.to.y,
+            message: `Your ${shooter.type === 'turret' ? 'turret' : 'guard tower'} hit ${nameOf(target.ownerId)}'s ${target.type} (-${ev.damage})` });
+        }
       });
 
       setCombatLogs(logs => [...logs, ...newLogs].slice(-10)); // keep last 10
@@ -328,6 +335,16 @@ export default function App() {
           resourceMaxAmounts.current[r.id] = r.amount;
         }
       }
+    });
+
+    s.on('ledger_history', (data: { entries: LedgerEntry[], lastSeen: number | null }) => {
+      if (data.lastSeen === null) return;
+      const missed = data.entries.filter(e => e.time > data.lastSeen!);
+      if (missed.length > 0) setAwayReport(missed);
+    });
+
+    s.on('ledger_entry', (e: LedgerEntry) => {
+      setCombatLogs(logs => [...logs, { id: e.id, time: e.time, message: e.text, targetX: e.x, targetY: e.y, tone: e.kind }].slice(-10));
     });
 
     s.on('resource_depleted', (rId: string) => {
@@ -1765,9 +1782,11 @@ export default function App() {
                 autoFollow.current = false;
               }}
               className={`flex items-center justify-between gap-2 px-2 py-1 metallic-panel-inset text-[10px] sm:text-[11px] font-sans font-bold cursor-pointer transition-all ${
-                isNew 
-                  ? 'border-red-500 text-red-400 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse' 
-                  : 'text-zinc-400 hover:border-zinc-500'
+                isNew
+                  ? (log.tone === 'lost'
+                    ? 'border-red-500 text-red-400 shadow-[0_0_8px_rgba(239,68,68,0.5)] animate-pulse'
+                    : 'border-cyan-500 text-cyan-300')
+                  : (log.tone === 'lost' ? 'text-red-400/70 hover:border-zinc-500' : 'text-zinc-400 hover:border-zinc-500')
               }`}
             >
               <span className="line-clamp-1">{log.message}</span>
@@ -1998,7 +2017,8 @@ export default function App() {
                       const modifier = isCostTrait ? 0.75 : 1.0;
                       const buildingData = (buildings as any).miner;
                       const baseConstructionLvl = store.me?.upgrades?.base_construction || 0;
-                      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01));
+                      const traitCostLvl = store.me?.upgrades?.trait_cost_upg || 0;
+                      const discountFactor = Math.max(0.4, 1.0 - (baseConstructionLvl * 0.01) - (traitCostLvl * 0.01));
 
                       const numWorkers = Object.values(store.state?.units || {}).filter(u => u.ownerId === store.me?.id && u.type === 'miner').length;
                       const workerCostMultiplier = Math.pow(2, Math.floor(numWorkers / 10));
@@ -2040,9 +2060,20 @@ export default function App() {
                         { id: 'gold', label: 'Gold', color: 'text-yellow-400', val: goldMiners, icon: getIconComponent(icons.resources.gold.name, icons.resources.gold.library), iconCol: icons.resources.gold.color }
                       ].map(r => (
                         <div key={r.id} className="flex items-center justify-between metallic-panel-inset p-1.5 bg-zinc-900/50 hover:bg-zinc-900 border-x-0 border-b-0 border-t-zinc-800">
-                          <div className="flex items-center gap-2 px-1 font-bold">
-                            <r.icon className="w-4 h-4 dynamic-icon-color" style={{ '--icon-color': r.iconCol } as React.CSSProperties} />
-                            <span className={`${r.color} text-[11px] font-display tracking-widest uppercase`}>{r.label}</span>
+                          <div className="flex items-center gap-2 px-1 font-bold min-w-0">
+                            <r.icon className="w-4 h-4 dynamic-icon-color shrink-0" style={{ '--icon-color': r.iconCol } as React.CSSProperties} />
+                            <div className="flex flex-col min-w-0">
+                              <span className={`${r.color} text-[11px] font-display tracking-widest uppercase`}>{r.label}</span>
+                              {(() => {
+                                const stalled = myMiners.filter(u => u.assignedResource === r.id && u.stall);
+                                if (stalled.length === 0) return null;
+                                return (
+                                  <span className="text-[9px] font-sans text-amber-400 leading-tight">
+                                    {stalled.length} stalled: {stalled[0].stall}
+                                  </span>
+                                );
+                              })()}
+                            </div>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <button
@@ -2271,13 +2302,15 @@ export default function App() {
                       const canAfford = (inventory.wood >= cost.wood) && (inventory.stone >= cost.stone) && (inventory.gold >= cost.gold);
 
                       let bonusStr = '';
+                      const maxLevel = (upg as any).maxLevel as number | undefined;
+                      const isMaxed = maxLevel !== undefined && lvl >= maxLevel;
                       if (upg.id === 'miner_speed') {
-                        bonusStr = `${lvl * 2}% → ${(lvl + 1) * 2}%`;
+                        bonusStr = `+${lvl * 2} → +${(lvl + 1) * 2} speed`;
                       } else if (upg.id === 'miner_capacity') {
                         const baseCap = (buildings as any).miner.baseCapacity;
                         bonusStr = `${baseCap + lvl * 1} → ${baseCap + (lvl + 1) * 1}`;
-                      } else if (upg.id === 'base_tax') {
-                        bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
+                      } else if (upg.id === 'base_depot') {
+                        bonusStr = `+${lvl * 5}% → +${(lvl + 1) * 5}%`;
                       } else if (upg.id === 'trait_speed_upg') {
                         bonusStr = `+${lvl * 1}% → +${(lvl + 1) * 1}%`;
                       } else if (upg.id === 'trait_strength_upg') {
@@ -2286,12 +2319,12 @@ export default function App() {
                         bonusStr = `-${lvl * 1}% → -${(lvl + 1) * 1}%`;
                       } else if (upg.id === 'base_construction') {
                         bonusStr = `${Math.min(60, lvl * 1)}% → ${Math.min(60, (lvl + 1) * 1)}%`;
-                      } else if (upg.id === 'wall_solar') {
-                        bonusStr = `+${lvl} → +${lvl + 1}`;
+                      } else if (upg.id === 'wall_roads') {
+                        bonusStr = `+${lvl * 10}% → +${(lvl + 1) * 10}%`;
                       } else if (upg.id === 'wall_magnetic') {
                         bonusStr = `${lvl * 1}% → ${(lvl + 1) * 1}%`;
-                      } else if (upg.id === 'turret_collector') {
-                        bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
+                      } else if (upg.id === 'turret_depot') {
+                        bonusStr = isMaxed ? 'active' : 'off → on';
                       } else if (upg.id === 'turret_beam') {
                         bonusStr = `+${lvl * 1} → +${(lvl + 1) * 1}`;
                       } else if (upg.id === "base_expansion") {
@@ -2335,14 +2368,14 @@ export default function App() {
                               onClick={() => {
                                 if (socket) socket.emit('purchase_upgrade', { upgradeId: upg.id });
                               }}
-                              disabled={!canAfford}
+                              disabled={!canAfford || isMaxed}
                               className={`h-8 px-2.5 rounded-sm font-display font-bold text-[10px] uppercase tracking-widest transition-all active:scale-[0.98] ${
-                                canAfford
+                                canAfford && !isMaxed
                                   ? 'metallic-button text-cyan-400 hover:text-cyan-300 shadow-sm'
                                   : 'metallic-button opacity-50 text-zinc-500 cursor-not-allowed'
                               }`}
                             >
-                              Up
+                              {isMaxed ? 'Max' : 'Up'}
                             </button>
                           </div>
                         </div>
@@ -2732,6 +2765,42 @@ export default function App() {
                 Confirm Authorization
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {awayReport && scene === 'playing' && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm pointer-events-auto">
+          <div className="metallic-panel p-4 sm:p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white my-auto">
+            <h2 className="text-xl font-display uppercase tracking-widest text-cyan-400 font-bold mb-1">While You Were Away</h2>
+            <p className="text-[10px] text-zinc-500 font-sans uppercase tracking-widest mb-3">
+              {awayReport.filter(e => e.kind === 'lost').length} lost · {awayReport.filter(e => e.kind === 'gained').length} gained
+            </p>
+            <div className="space-y-1 max-h-[45vh] overflow-y-auto pr-1">
+              {awayReport.map(e => (
+                <button
+                  key={e.id}
+                  onClick={() => {
+                    camera.current.x = e.x;
+                    camera.current.y = e.y;
+                    autoFollow.current = false;
+                    setAwayReport(null);
+                  }}
+                  className={`w-full flex items-center justify-between gap-2 px-2 py-1.5 metallic-panel-inset text-left text-[11px] font-sans font-bold ${e.kind === 'lost' ? 'text-red-400' : 'text-zinc-300'}`}
+                >
+                  <span>{e.text}</span>
+                  <span className="shrink-0 font-display text-[9px] text-zinc-500">
+                    {new Date(e.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} [{e.x}, {e.y}]
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setAwayReport(null)}
+              className="mt-4 w-full metallic-button-selected text-white font-display uppercase tracking-widest py-2 px-4 rounded-sm text-sm active:scale-[0.98]"
+            >
+              Acknowledge
+            </button>
           </div>
         </div>
       )}

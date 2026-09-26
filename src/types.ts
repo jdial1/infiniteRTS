@@ -46,6 +46,16 @@ export interface Unit {
   inventory: { type: 'wood' | 'stone' | 'gold' | null, amount: number };
   capacity: number;
   assignedResource: 'wood' | 'stone' | 'gold' | null;
+  stall?: string | null;
+}
+
+export interface LedgerEntry {
+  id: string;
+  time: number;
+  kind: 'lost' | 'gained';
+  text: string;
+  x: number;
+  y: number;
 }
 
 export interface MapZone {
