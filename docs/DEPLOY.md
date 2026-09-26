@@ -56,11 +56,7 @@ Debug builds are signed with the shared debug key, which is already registered. 
 
 ## The retired web client
 
-The React client was removed from this repository when the Android app replaced it, and it remains in git history. Its last build is still live on Firebase Hosting at https://infiniterts-6c5ab.web.app, and it still works against the same server. Once the Android app is confirmed working, take it down:
-
-```sh
-firebase hosting:disable --project infiniterts-6c5ab
-```
+The React client was removed from this repository when the Android app replaced it; it remains in git history. Its Firebase Hosting site was disabled on 2026-09-26, so https://infiniterts-6c5ab.web.app no longer serves a game. Deploying a new Hosting version would re-enable the site.
 
 ## Local development
 
