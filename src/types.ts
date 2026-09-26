@@ -20,6 +20,9 @@ export interface Player {
   score: number;
   traits: ('speed' | 'strength' | 'cost')[];
   upgrades: Record<string, number>;
+  plan?: { phase: number; delivered: { wood: number; stone: number; gold: number } };
+  laborRatio?: { wood: number; stone: number; gold: number } | null;
+  hidden?: boolean; // a rival outside this client's vision: known by name, not by position
 }
 
 export interface Building {
@@ -33,6 +36,8 @@ export interface Building {
   capturingPlayerId?: string | null;
   isConflict?: boolean;
   subType?: "refinery" | "guard_tower" | "market" | "sanctuary" | "fortress";
+  paid?: { wood: number; stone: number; gold: number };
+  maxHealth?: number;
 }
 
 export interface Unit {
@@ -73,4 +78,30 @@ export interface GameState {
   buildings: Record<string, Building>;
   units: Record<string, Unit>;
   zones: Record<string, MapZone>;
+}
+
+export interface ScoreRow {
+  id: string;
+  name: string;
+  color: string;
+  traits: Player['traits'];
+  score: number;
+  outposts: number;
+  planPhase: number;
+  online: boolean;
+}
+
+export interface DepotRate {
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  wood: number;
+  stone: number;
+  gold: number;
+}
+
+export interface RatesReport {
+  perMinute: { wood: number; stone: number; gold: number };
+  depots: DepotRate[];
 }

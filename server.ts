@@ -5,8 +5,11 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { v4 as uuidv4 } from 'uuid';
 
-import { GameState, ResourceNode, Building, Player, MapZone, Unit, LedgerEntry } from './src/types'; // Types
+import { GameState, ResourceNode, Building, Player, MapZone, Unit, LedgerEntry, ScoreRow, RatesReport, DepotRate } from './src/types'; // Types
 import { constants, buildings, upgrades } from './data';
+import { isPointInTerritory } from './src/utils/geometry';
+import { planRequirement, planInstalment, scoreFor, heroMaxSpeed, visionCircles, canSee, VisionCircle, demolishRefund, maxHealthOf, desiredLabour, RESOURCE_TYPES } from './src/rules';
+import { loadWorld, saveWorld, WorldSnapshot } from './server/persistence';
 
 // Initialize game state
 const gameState: GameState = {
@@ -27,6 +30,11 @@ let totalOutpostsGenerated = 0;
 const chunkData = new Map<string, { resources: ResourceNode[], zones: MapZone[] }>();
 const zoneTypes: MapZone['type'][] = ['forest', 'desert', 'mountain'];
 
+const VISION_SYNC_TICKS = 5; // twice a second
+const STANDINGS_TICKS = 20; // every two seconds
+const SAVE_INTERVAL_MS = 30000;
+const WORLD_FILE = process.env.WORLD_FILE || path.join(process.cwd(), 'saves', 'world.json');
+
 // Workers within this distance of one of their owner's walls are on a supply road
 const SUPPLY_ROAD_RANGE = 150;
 
@@ -40,65 +48,6 @@ function deliveryMultiplier(player: Player, dropoff: Building, type: ResourceNod
 }
 
 
-
-function isPointInTerritory(px: number, py: number, userId: string, gameState: any, constants: any) {
-  // 1. Check Base (radius 450)
-  const playerBase = Object.values(gameState.buildings).find((b: any) => b.ownerId === userId && b.type === 'base') as any;
-  if (playerBase) {
-    const dx = px - playerBase.x;
-    const dy = py - playerBase.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= constants.BUILD_RANGE) return true;
-  }
-
-  // 2. Check Outposts
-  const ownedOutposts = Object.values(gameState.buildings).filter((b: any) => b.ownerId === userId && b.type === 'outpost') as any[];
-  const OUTPOST_BUILD_RADIUS = 400;
-  const OUTPOST_SPACING = 600;
-
-  for (const o of ownedOutposts) {
-    const dx = px - o.x;
-    const dy = py - o.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= OUTPOST_BUILD_RADIUS) return true;
-  }
-
-  // 3. Check Bridges (1D)
-  for (let i = 0; i < ownedOutposts.length; i++) {
-    for (let j = i + 1; j < ownedOutposts.length; j++) {
-      const a = ownedOutposts[i];
-      const b = ownedOutposts[j];
-
-      const dx = Math.abs(a.x - b.x);
-      const dy = Math.abs(a.y - b.y);
-
-      if ((Math.abs(dx - OUTPOST_SPACING) < 1 && dy < 1) || (dx < 1 && Math.abs(dy - OUTPOST_SPACING) < 1)) {
-        // Adjacent
-        const minX = Math.min(a.x, b.x);
-        const maxX = Math.max(a.x, b.x);
-        const minY = Math.min(a.y, b.y);
-        const maxY = Math.max(a.y, b.y);
-
-        if (dx > dy) { // Horizontal bridge
-          if (px >= minX && px <= maxX && Math.abs(py - a.y) <= 200) return true;
-        } else { // Vertical bridge
-          if (py >= minY && py <= maxY && Math.abs(px - a.x) <= 200) return true;
-        }
-      }
-    }
-  }
-
-  // 4. Check 2D Squares
-  for (const o of ownedOutposts) {
-    const hasTR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - o.y) < 1);
-    const hasBL = ownedOutposts.some(ot => Math.abs(ot.x - o.x) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-    const hasBR = ownedOutposts.some(ot => Math.abs(ot.x - (o.x + OUTPOST_SPACING)) < 1 && Math.abs(ot.y - (o.y + OUTPOST_SPACING)) < 1);
-
-    if (hasTR && hasBL && hasBR) {
-      if (px >= o.x && px <= o.x + OUTPOST_SPACING && py >= o.y && py <= o.y + OUTPOST_SPACING) return true;
-    }
-  }
-
-  return false;
-}
 
 function isPointInValidMiningArea(x: number, y: number, ownerId: string, gameState: GameState, constants: any): boolean {
   const playerBase = Object.values(gameState.buildings).find(b => b.ownerId === ownerId && b.type === 'base');
@@ -307,6 +256,199 @@ function generateChunk(cx: number, cy: number) {
     if (sId) io.to(sId).emit('ledger_entry', entry);
   }
 
+  // --- Vision: rivals' buildings, units, and heroes are only sent inside the receiver's vision ---
+  type VisionState = {
+    circles: VisionCircle[];
+    known: Map<string, number>; // rival buildings this client has seen, by id -> health last sent
+    knownAt: Map<string, { x: number; y: number }>;
+    units: Set<string>; // rival units currently visible
+    players: Set<string>; // rival heroes currently visible
+  };
+  const vision = new Map<string, VisionState>();
+
+  const newVisionState = (): VisionState => ({ circles: [], known: new Map(), knownAt: new Map(), units: new Set(), players: new Set() });
+  const isPublic = (b: Building) => b.type === 'outpost'; // the political map is public; what stands on it is not
+
+  function publicPlayer(p: Player, visible: boolean): Player {
+    return {
+      id: p.id, name: p.name, color: p.color, traits: p.traits,
+      x: visible ? p.x : 0, y: visible ? p.y : 0, hidden: !visible,
+      inventory: { wood: 0, stone: 0, gold: 0 }, score: 0, upgrades: {},
+    };
+  }
+
+  function sendToPlayer(playerId: string, event: string, payload: any) {
+    const sId = userToSocket.get(playerId);
+    if (sId) io.to(sId).emit(event, payload);
+  }
+
+  // A rival building changed: tell its owner, and anyone who can see it right now
+  function emitBuilding(event: 'building_created' | 'building_updated' | 'building_destroyed', b: Building) {
+    if (isPublic(b)) {
+      io.emit(event, event === 'building_destroyed' ? b.id : b);
+      return;
+    }
+    for (const [pid, v] of vision) {
+      if (pid !== b.ownerId && !canSee(v.circles, b.x, b.y)) continue;
+      sendToPlayer(pid, event, event === 'building_destroyed' ? b.id : b);
+      if (pid === b.ownerId) continue;
+      if (event === 'building_destroyed') { v.known.delete(b.id); v.knownAt.delete(b.id); }
+      else { v.known.set(b.id, b.health); v.knownAt.set(b.id, { x: b.x, y: b.y }); }
+    }
+  }
+
+  function emitUnit(event: 'unit_created' | 'unit_updated', u: Unit) {
+    for (const [pid, v] of vision) {
+      if (pid !== u.ownerId && !v.units.has(u.id)) continue;
+      sendToPlayer(pid, event, u);
+    }
+  }
+
+  function emitPlayerUpdated(p: Player) {
+    for (const [pid, v] of vision) {
+      sendToPlayer(pid, 'player_updated', pid === p.id ? p : publicPlayer(p, v.players.has(p.id)));
+    }
+  }
+
+  // Recompute what one player can see, and send them what entered or left their view
+  function syncVision(pid: string) {
+    const v = vision.get(pid);
+    if (!v) return;
+    v.circles = visionCircles(pid, gameState);
+    const upserts: Building[] = [];
+    const removed: string[] = [];
+    for (const b of Object.values(gameState.buildings)) {
+      if (b.ownerId === pid || isPublic(b)) continue;
+      if (!canSee(v.circles, b.x, b.y)) continue;
+      if (v.known.get(b.id) !== b.health) upserts.push(b);
+      v.known.set(b.id, b.health);
+      v.knownAt.set(b.id, { x: b.x, y: b.y });
+    }
+    // A remembered building is only forgotten once its spot is back in view and it isn't there
+    for (const [id, at] of v.knownAt) {
+      if (!gameState.buildings[id] && canSee(v.circles, at.x, at.y)) {
+        removed.push(id);
+        v.known.delete(id);
+        v.knownAt.delete(id);
+      }
+    }
+    const units: Unit[] = [];
+    const nowUnits = new Set<string>();
+    for (const u of Object.values(gameState.units)) {
+      if (u.ownerId === pid || !canSee(v.circles, u.x, u.y)) continue;
+      nowUnits.add(u.id);
+      if (!v.units.has(u.id)) units.push(u);
+    }
+    const removedUnits = [...v.units].filter(id => !nowUnits.has(id));
+    v.units = nowUnits;
+    const shown: Player[] = [];
+    const nowPlayers = new Set<string>();
+    for (const p of Object.values(gameState.players)) {
+      if (p.id === pid || !userToSocket.has(p.id) || !canSee(v.circles, p.x, p.y)) continue;
+      nowPlayers.add(p.id);
+      if (!v.players.has(p.id)) shown.push(publicPlayer(p, true));
+    }
+    const hiddenPlayers = [...v.players].filter(id => !nowPlayers.has(id));
+    v.players = nowPlayers;
+    if (upserts.length || removed.length || units.length || removedUnits.length || shown.length || hiddenPlayers.length) {
+      sendToPlayer(pid, 'vision', { buildings: upserts, removedBuildings: removed, units, removedUnits, players: shown, hiddenPlayers });
+    }
+  }
+
+  // The snapshot a joining client starts from: its own state, the public map, and only what it can see
+  function initialStateFor(pid: string) {
+    const v = newVisionState();
+    vision.set(pid, v);
+    v.circles = visionCircles(pid, gameState);
+    const players: Record<string, Player> = {};
+    for (const p of Object.values(gameState.players)) {
+      if (p.id === pid) { players[p.id] = p; continue; }
+      const visible = userToSocket.has(p.id) && canSee(v.circles, p.x, p.y);
+      if (visible) v.players.add(p.id);
+      players[p.id] = publicPlayer(p, visible);
+    }
+    const bs: Record<string, Building> = {};
+    for (const b of Object.values(gameState.buildings)) {
+      if (b.ownerId === pid || isPublic(b)) { bs[b.id] = b; continue; }
+      if (canSee(v.circles, b.x, b.y)) {
+        bs[b.id] = b;
+        v.known.set(b.id, b.health);
+        v.knownAt.set(b.id, { x: b.x, y: b.y });
+      }
+    }
+    const us: Record<string, Unit> = {};
+    for (const u of Object.values(gameState.units)) {
+      if (u.ownerId === pid) { us[u.id] = u; continue; }
+      if (canSee(v.circles, u.x, u.y)) { us[u.id] = u; v.units.add(u.id); }
+    }
+    return { players, buildings: bs, units: us, zones: {}, resources: {} };
+  }
+
+  // --- Hero movement: the client reports, the server decides ---
+  const moveBudgets = new Map<string, { budget: number; at: number }>();
+  const MOVE_TOLERANCE = 1.25; // headroom for frame timing
+  const MAX_BANKED_SECONDS = 1; // how much unused movement a hero can save up
+
+  // --- Rates: every delivery is logged, so the player can see which route pays ---
+  const RATE_WINDOW_MS = 60000;
+  const deliveries = new Map<string, { t: number; type: ResourceNode['type']; amount: number; depotId: string; label: string; x: number; y: number }[]>();
+
+  function logDelivery(pid: string, type: ResourceNode['type'], amount: number, depotId: string, label: string, x: number, y: number) {
+    const list = deliveries.get(pid) || [];
+    list.push({ t: Date.now(), type, amount, depotId, label, x, y });
+    deliveries.set(pid, list);
+  }
+
+  function ratesFor(pid: string): RatesReport {
+    const cutoff = Date.now() - RATE_WINDOW_MS;
+    const list = (deliveries.get(pid) || []).filter(d => d.t >= cutoff);
+    deliveries.set(pid, list);
+    const perMinute = { wood: 0, stone: 0, gold: 0 };
+    const depots = new Map<string, DepotRate>();
+    for (const d of list) {
+      perMinute[d.type] += d.amount;
+      const row = depots.get(d.depotId) || { id: d.depotId, label: d.label, x: d.x, y: d.y, wood: 0, stone: 0, gold: 0 };
+      row[d.type] += d.amount;
+      depots.set(d.depotId, row);
+    }
+    return { perMinute, depots: [...depots.values()].sort((a, b) => (b.wood + b.stone + b.gold) - (a.wood + a.stone + a.gold)) };
+  }
+
+  const depotLabel = (b: Building) => b.type === 'base' ? 'Command Base' : b.type === 'turret' ? 'Forward depot' : `${b.subType ? b.subType.replace('_', ' ') + ' ' : ''}outpost`;
+
+  // --- Standing orders: keep each player's labour split at the ratio they set ---
+  function balanceLabour(p: Player) {
+    const ratio = p.laborRatio;
+    if (!ratio) return;
+    const miners = Object.values(gameState.units).filter(u => u.ownerId === p.id && u.type === 'miner');
+    const want = desiredLabour(miners.length, ratio);
+    const have = { wood: 0, stone: 0, gold: 0 };
+    miners.forEach(u => { if (u.assignedResource) have[u.assignedResource]++; });
+    const reassign = (u: Unit, to: ResourceNode['type']) => {
+      if (u.assignedResource) have[u.assignedResource]--;
+      u.assignedResource = to;
+      have[to]++;
+      u.targetId = undefined;
+      u.stall = null;
+      u.state = u.inventory.amount > 0 ? 'returning' : 'idle';
+      emitUnit('unit_updated', u);
+    };
+    const deficit = () => RESOURCE_TYPES.filter(t => have[t] < want[t]).sort((a, b) => (want[b] - have[b]) - (want[a] - have[a]))[0];
+    for (const u of miners) {
+      const t = deficit();
+      if (!t) break;
+      if (!u.assignedResource || have[u.assignedResource] > want[u.assignedResource]) reassign(u, t);
+    }
+  }
+
+  // --- Standings: held ground and fulfilled Plan phases, nothing else ---
+  function scoreboard(): ScoreRow[] {
+    return Object.values(gameState.players).map(p => {
+      const s = scoreFor(p.id, p, gameState.buildings);
+      return { id: p.id, name: p.name, color: p.color, traits: p.traits, score: s.score, outposts: s.outposts, planPhase: s.planPhase, online: userToSocket.has(p.id) };
+    }).sort((a, b) => b.score - a.score);
+  }
+
   // API Route
   app.get('/api/health', (req, res) => {
     res.json({ status: 'ok' });
@@ -351,32 +493,31 @@ function generateChunk(cx: number, cy: number) {
         inventory: { wood: 300, stone: 200, gold: 100 }, // starting resources
         score: 0,
         traits: [],
-        upgrades: initialUpgrades
+        upgrades: initialUpgrades,
+        plan: { phase: 0, delivered: { wood: 0, stone: 0, gold: 0 } },
+        laborRatio: { wood: 1, stone: 1, gold: 1 }
       };
       // Broadcast to others ONLY if new player
-      socket.broadcast.emit('player_joined', gameState.players[userId]);
+      socket.broadcast.emit('player_joined', publicPlayer(gameState.players[userId], false));
     } else {
       console.log(`Player reconnected: ${userId}`);
     }
 
     const player = gameState.players[userId];
+    if (!player.plan) player.plan = { phase: 0, delivered: { wood: 0, stone: 0, gold: 0 } };
+    if (player.laborRatio === undefined) player.laborRatio = { wood: 1, stone: 1, gold: 1 };
+    moveBudgets.set(userId, { budget: 0, at: Date.now() });
 
-    // Send initial state to the player
-    const initState = {
-      players: gameState.players,
-      buildings: gameState.buildings,
-      units: gameState.units,
-      zones: {},
-      resources: {}
-    };
-    socket.emit('init', initState);
+    // Send initial state to the player: its own state, the public map, and only what it can see
+    socket.emit('init', initialStateFor(userId));
+    socket.emit('scoreboard', scoreboard());
     socket.emit('ledger_history', { entries: ledgers.get(userId) || [], lastSeen: lastSeenAt.get(userId) ?? null });
 
     socket.on('select_traits', (traits: ('speed' | 'strength' | 'cost')[]) => {
       const player = gameState.players[userId];
       if (player && player.traits.length === 0 && traits.length === 2) {
         player.traits = traits;
-        io.emit('player_updated', player);
+        emitPlayerUpdated(player);
       }
     });
 
@@ -407,19 +548,39 @@ function generateChunk(cx: number, cy: number) {
       socket.emit('chunk_data', result);
     });
 
+    // The hero spends a movement budget that refills at its legal top speed. A report that
+    // outruns the budget is cut short, and the client is told where its hero really is.
     socket.on('move', (data: { x: number; y: number }) => {
       const player = gameState.players[userId];
-      if (player) {
-         player.x = data.x;
-         player.y = data.y;
+      if (!player || !Number.isFinite(data?.x) || !Number.isFinite(data?.y)) return;
+      const now = Date.now();
+      const speed = heroMaxSpeed(player) * MOVE_TOLERANCE;
+      const m = moveBudgets.get(userId) || { budget: 0, at: now };
+      m.budget = Math.min(speed * MAX_BANKED_SECONDS, m.budget + speed * (now - m.at) / 1000);
+      m.at = now;
+      const dx = data.x - player.x, dy = data.y - player.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist <= m.budget) {
+        player.x = data.x;
+        player.y = data.y;
+        m.budget -= dist;
+      } else {
+        const f = m.budget / dist;
+        player.x += dx * f;
+        player.y += dy * f;
+        m.budget = 0;
+        socket.emit('position_corrected', { x: player.x, y: player.y });
       }
+      moveBudgets.set(userId, m);
     });
 
     socket.on('build', (data: { type: Building['type'], x: number, y: number }) => {
       const player = gameState.players[userId];
       if (!player) return;
 
-      if (data.type === 'miner' as any) return;
+      // Outposts are captured, never built; workers are trained
+      if (data.type !== 'base' && data.type !== 'wall' && data.type !== 'turret') return;
+      if (!Number.isFinite(data.x) || !Number.isFinite(data.y)) return;
 
       if (data.type === 'base') {
         const hasBase = Object.values(gameState.buildings).some(b => b.ownerId === userId && b.type === 'base');
@@ -466,10 +627,12 @@ function generateChunk(cx: number, cy: number) {
           x: data.x,
           y: data.y,
           ownerId: userId,
-          health: Math.floor(buildingData.health * healthModifier)
+          health: Math.floor(buildingData.health * healthModifier),
+          paid: finalCost
         };
+        b.maxHealth = b.health;
         gameState.buildings[bId] = b;
-        io.emit('building_created', b);
+        emitBuilding('building_created', b);
         socket.emit('inventory_updated', player.inventory);
       }
     });
@@ -523,7 +686,8 @@ function generateChunk(cx: number, cy: number) {
             assignedResource: null
           };
           gameState.units[uId] = u;
-          io.emit('unit_created', u);
+          sendToPlayer(userId, 'unit_created', u);
+          balanceLabour(player);
           socket.emit('inventory_updated', player.inventory);
         }
       }
@@ -575,17 +739,20 @@ function generateChunk(cx: number, cy: number) {
           Object.values(gameState.units).forEach(u => {
             if (u.ownerId === player.id && u.type === 'miner') {
               u.capacity = newCapacity;
-              io.emit('unit_updated', u);
+              emitUnit('unit_updated', u);
             }
           });
         }
 
-        io.emit('player_updated', player);
+        emitPlayerUpdated(player);
         socket.emit('inventory_updated', player.inventory);
       }
     });
 
     socket.on('assign_miner', (data: { resource: 'wood' | 'stone' | 'gold', delta: number }) => {
+      // Under standing orders the ratio decides; hand assignment is for players who turned them off
+      if (gameState.players[userId]?.laborRatio) return;
+      if (!RESOURCE_TYPES.includes(data.resource)) return;
       const playerMiners = Object.values(gameState.units).filter(u => u.ownerId === userId && u.type === 'miner');
       if (data.delta === 1) {
         const unassigned = playerMiners.find(u => !u.assignedResource);
@@ -593,8 +760,7 @@ function generateChunk(cx: number, cy: number) {
           unassigned.assignedResource = data.resource;
           unassigned.state = 'idle';
           unassigned.targetId = undefined;
-          // Notice we don't strictly need unit_updated since state_tick sends it, but lets emit for immediate update
-          io.emit('unit_updated', unassigned);
+          emitUnit('unit_updated', unassigned);
         }
       } else if (data.delta === -1) {
         const assigned = playerMiners.find(u => u.assignedResource === data.resource);
@@ -602,11 +768,64 @@ function generateChunk(cx: number, cy: number) {
           assigned.assignedResource = null;
           assigned.state = 'returning';
           assigned.targetId = undefined;
-          io.emit('unit_updated', assigned);
+          emitUnit('unit_updated', assigned);
         }
       }
     });
     
+    socket.on('set_labor_ratio', (ratio: { wood: number; stone: number; gold: number } | null) => {
+      const player = gameState.players[userId];
+      if (!player) return;
+      if (ratio === null) {
+        player.laborRatio = null;
+      } else {
+        const clean = { wood: 0, stone: 0, gold: 0 };
+        for (const t of RESOURCE_TYPES) {
+          const n = Math.round(Number(ratio?.[t]));
+          if (!Number.isFinite(n)) return;
+          clean[t] = Math.max(0, Math.min(9, n));
+        }
+        player.laborRatio = clean;
+        balanceLabour(player);
+      }
+      emitPlayerUpdated(player);
+    });
+
+    // The Plan is delivered to the Command Base, at most a quarter of the phase per delivery
+    socket.on('plan_deliver', () => {
+      const player = gameState.players[userId];
+      if (!player) return;
+      const base = Object.values(gameState.buildings).find(b => b.ownerId === userId && b.type === 'base');
+      if (!base) return;
+      const plan = player.plan || (player.plan = { phase: 0, delivered: { wood: 0, stone: 0, gold: 0 } });
+      const need = planRequirement(plan.phase);
+      const instalment = planInstalment(plan.phase);
+      for (const t of RESOURCE_TYPES) {
+        const give = Math.max(0, Math.min(Math.floor(player.inventory[t]), need[t] - plan.delivered[t], instalment[t]));
+        player.inventory[t] -= give;
+        plan.delivered[t] += give;
+      }
+      if (RESOURCE_TYPES.every(t => plan.delivered[t] >= need[t])) {
+        plan.phase += 1;
+        plan.delivered = { wood: 0, stone: 0, gold: 0 };
+        recordLedger(userId, 'gained', `Phase ${plan.phase} of the Plan fulfilled.`, base.x, base.y);
+        io.emit('scoreboard', scoreboard());
+      }
+      emitPlayerUpdated(player);
+      socket.emit('inventory_updated', player.inventory);
+    });
+
+    socket.on('demolish', (buildingId: string) => {
+      const player = gameState.players[userId];
+      const b = gameState.buildings[buildingId];
+      if (!player || !b || b.ownerId !== userId || b.type === 'outpost') return;
+      const refund = demolishRefund(b);
+      for (const t of RESOURCE_TYPES) player.inventory[t] += refund[t];
+      delete gameState.buildings[b.id];
+      emitBuilding('building_destroyed', b);
+      socket.emit('inventory_updated', player.inventory);
+    });
+
     socket.on('gather', (resourceId: string) => {
       const player = gameState.players[userId];
       const resource = gameState.resources[resourceId];
@@ -636,6 +855,7 @@ function generateChunk(cx: number, cy: number) {
            const finalAmount = Math.round((10 + extraGather) * bonus);
            resource.amount -= 10;
            player.inventory[resource.type] += finalAmount;
+           logDelivery(userId, resource.type, finalAmount, 'hand', 'Gathered by hand', resource.x, resource.y);
            if (resource.amount <= 0) {
              delete gameState.resources[resourceId];
              io.emit('resource_depleted', resourceId);
@@ -652,9 +872,10 @@ function generateChunk(cx: number, cy: number) {
       socketToUser.delete(socket.id);
       if (userToSocket.get(userId) === socket.id) {
         userToSocket.delete(userId);
+        vision.delete(userId);
         lastSeenAt.set(userId, Date.now());
+        io.emit('player_left', userId);
       }
-      io.emit('player_left', userId);
     });
   });
 
@@ -697,12 +918,12 @@ function generateChunk(cx: number, cy: number) {
             });
             if (target.health <= 0) {
               delete gameState.buildings[target.id];
-              io.emit('building_destroyed', target.id);
+              emitBuilding('building_destroyed', target);
               const shooter = isGuardTower ? 'guard tower' : 'turret';
               recordLedger(target.ownerId, 'lost', `${playerName(b.ownerId)}'s ${shooter} destroyed your ${buildingLabel(target)}.`, target.x, target.y);
               recordLedger(b.ownerId, 'gained', `Your ${shooter} destroyed ${playerName(target.ownerId)}'s ${buildingLabel(target)}.`, target.x, target.y);
             } else {
-              io.emit('building_updated', target);
+              emitBuilding('building_updated', target);
             }
           }
         }
@@ -713,7 +934,9 @@ function generateChunk(cx: number, cy: number) {
     // Outpost capture logic
     Object.values(gameState.buildings).forEach(b => {
       if (b.type === 'outpost') {
+        // Only a hero whose commander is present can stake ground; a parked, absent hero holds nothing
         const playersNear = Object.values(gameState.players).filter(p => {
+          if (!userToSocket.has(p.id)) return false;
           const dx = p.x - b.x;
           const dy = p.y - b.y;
           return Math.sqrt(dx*dx + dy*dy) <= 150; // Capture radius
@@ -774,7 +997,7 @@ function generateChunk(cx: number, cy: number) {
         }
 
         if (b.captureProgress !== oldProgress || b.ownerId !== oldOwner || b.capturingPlayerId !== oldCapturer || b.isConflict !== oldConflict) {
-          io.emit('building_updated', b);
+          emitBuilding('building_updated', b);
         }
       }
     });
@@ -787,36 +1010,52 @@ function generateChunk(cx: number, cy: number) {
           let healed = false;
           Object.values(gameState.buildings).forEach(eb => {
             if (eb.ownerId === b.ownerId) {
-              const maxHealth = buildings[eb.type]?.health || 100;
+              const maxHealth = maxHealthOf(eb);
               if (eb.health < maxHealth) {
                 const dist = Math.sqrt(Math.pow(eb.x - b.x, 2) + Math.pow(eb.y - b.y, 2));
                 if (dist <= 300) {
                   eb.health = Math.min(eb.health + 5, maxHealth);
-                  io.emit('building_updated', eb);
+                  emitBuilding('building_updated', eb);
                   healed = true;
                 }
               }
             }
           });
           if (healed) {
-            healingEvents.push({ x: b.x, y: b.y, radius: 300 });
+            sendToPlayer(b.ownerId, 'healing_events', [{ x: b.x, y: b.y, radius: 300 }]);
           }
         }
       });
-      if (healingEvents.length > 0) {
-        io.emit('healing_events', healingEvents);
+    }
+
+    // Each client hears only the fights it can see or is part of
+    if (combatEvents.length > 0) {
+      for (const [pid, v] of vision) {
+        const seen = combatEvents.filter(ev =>
+          gameState.buildings[ev.from.id]?.ownerId === pid || canSee(v.circles, ev.from.x, ev.from.y) || canSee(v.circles, ev.to.x, ev.to.y));
+        if (seen.length > 0) sendToPlayer(pid, 'combat_events', seen);
       }
     }
 
-    if (combatEvents.length > 0) {
-      io.emit('combat_events', combatEvents);
+    if (ticksCount % VISION_SYNC_TICKS === 0) {
+      for (const pid of vision.keys()) syncVision(pid);
+    }
+    if (ticksCount % STANDINGS_TICKS === 0) {
+      Object.values(gameState.players).forEach(balanceLabour);
+      io.emit('scoreboard', scoreboard());
+      for (const pid of vision.keys()) sendToPlayer(pid, 'rates', ratesFor(pid));
     }
 
-    const positions = Object.values(gameState.players).map(p => ({id: p.id, x: p.x, y: p.y}));
-    const unitPositions = Object.values(gameState.units).map(u => ({
-      id: u.id, x: u.x, y: u.y, state: u.state, targetId: u.targetId, inventory: u.inventory, capacity: u.capacity, stall: u.stall ?? null
-    }));
-    io.emit('state_tick', { players: positions, units: unitPositions });
+    // Positions: every client gets its own hero and units, and rivals only while visible
+    for (const [pid, v] of vision) {
+      const players = Object.values(gameState.players)
+        .filter(p => p.id === pid || v.players.has(p.id))
+        .map(p => ({ id: p.id, x: p.x, y: p.y }));
+      const units = Object.values(gameState.units)
+        .filter(u => u.ownerId === pid || v.units.has(u.id))
+        .map(u => ({ id: u.id, x: u.x, y: u.y, state: u.state, targetId: u.targetId, inventory: u.inventory, capacity: u.capacity, stall: u.ownerId === pid ? (u.stall ?? null) : null }));
+      sendToPlayer(pid, 'state_tick', { players, units });
+    }
     
     let resourceUpdates: ResourceNode[] = [];
     let inventoryUpdates: Record<string, Player['inventory']> = {};
@@ -963,7 +1202,9 @@ function generateChunk(cx: number, cy: number) {
 
             if (dist < 30) {
               if (u.inventory.type) {
-                p.inventory[u.inventory.type] += Math.round(u.inventory.amount * deliveryMultiplier(p, dropoff, u.inventory.type));
+                const delivered = Math.round(u.inventory.amount * deliveryMultiplier(p, dropoff, u.inventory.type));
+                p.inventory[u.inventory.type] += delivered;
+                logDelivery(p.id, u.inventory.type, delivered, dropoff.id, depotLabel(dropoff), dropoff.x, dropoff.y);
                 inventoryUpdates[p.id] = p.inventory;
               }
               u.inventory = { type: null, amount: 0 };
@@ -987,6 +1228,44 @@ function generateChunk(cx: number, cy: number) {
     }
     
   }, 1000 / TICK_RATE);
+
+  // --- Persistence: the world outlives the process ---
+  const snapshot = (): WorldSnapshot => ({
+    version: 1,
+    gameState,
+    generatedChunks: [...generatedChunks],
+    chunkResourceIds: [...chunkData].map(([key, c]) => [key, c.resources.map(r => r.id), c.zones.map(z => z.id)]),
+    totalOutpostsGenerated,
+    ledgers: [...ledgers],
+    lastSeenAt: [...lastSeenAt],
+  });
+  const saved = loadWorld(WORLD_FILE);
+  if (saved) {
+    Object.assign(gameState, saved.gameState);
+    saved.generatedChunks.forEach(k => generatedChunks.add(k));
+    for (const [key, rIds, zIds] of saved.chunkResourceIds) {
+      chunkData.set(key, {
+        resources: rIds.map(id => gameState.resources[id]).filter(Boolean),
+        zones: zIds.map(id => gameState.zones[id]).filter(Boolean),
+      });
+    }
+    totalOutpostsGenerated = saved.totalOutpostsGenerated;
+    saved.ledgers.forEach(([k, v]) => ledgers.set(k, v));
+    saved.lastSeenAt.forEach(([k, v]) => lastSeenAt.set(k, v));
+    // Everyone was away while the server was down
+    const now = Date.now();
+    Object.keys(gameState.players).forEach(id => { if (!lastSeenAt.has(id)) lastSeenAt.set(id, now); });
+    console.log(`Loaded world from ${WORLD_FILE}: ${Object.keys(gameState.players).length} players, ${Object.keys(gameState.buildings).length} buildings`);
+  }
+  setInterval(() => saveWorld(WORLD_FILE, snapshot()), SAVE_INTERVAL_MS);
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+    process.once(signal, () => {
+      const now = Date.now();
+      for (const id of userToSocket.keys()) lastSeenAt.set(id, now);
+      saveWorld(WORLD_FILE, snapshot());
+      process.exit(0);
+    });
+  }
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {

@@ -1,7 +1,7 @@
 [
   {
     "id": "miner_speed",
-    "name": "Hyper-Engines",
+    "name": "Shock Brigades",
     "description": "Workers move +2 speed per level.",
     "category": "Miners",
     "target": "Workers",
@@ -12,7 +12,7 @@
   },
   {
     "id": "miner_capacity",
-    "name": "Quantum Cargo",
+    "name": "Heavy Barrows",
     "description": "Workers carry +1 resource per trip, per level.",
     "category": "Miners",
     "target": "Workers",
@@ -34,7 +34,7 @@
   },
   {
     "id": "base_expansion",
-    "name": "Base Expansion",
+    "name": "Territorial Mandate",
     "description": "Raises your outpost limit to (level + 2)², at 4x the cost each level.",
     "category": "Base",
     "target": "Territory",
@@ -45,7 +45,7 @@
   },
   {
     "id": "base_construction",
-    "name": "Construct Beacon",
+    "name": "Standardized Parts",
     "description": "Buildings and workers cost 1% less per level (60% total discount cap).",
     "category": "Base",
     "target": "All Builds",
@@ -67,10 +67,10 @@
   },
   {
     "id": "wall_magnetic",
-    "name": "Magnetic Express",
+    "name": "Courier Paths",
     "description": "Your hero moves +1% faster per level near your walls.",
     "category": "Wall",
-    "target": "Hero Agent",
+    "target": "Commander",
     "effect": "Near-Wall Speed",
     "icon": "Zap",
     "iconLibrary": "lucide",
@@ -90,18 +90,18 @@
   },
   {
     "id": "turret_beam",
-    "name": "Focal Laser",
+    "name": "Better Picks",
     "description": "Manual gathering yields +1 per click, per level.",
     "category": "Turret",
-    "target": "Hero Agent",
-    "effect": "Manual Laser Power",
+    "target": "Commander",
+    "effect": "Hand Yield",
     "icon": "Flame",
     "iconLibrary": "lucide",
     "baseCost": { "wood": 100, "stone": 80, "gold": 40 }
   },
   {
     "id": "trait_speed_upg",
-    "name": "Kinetic Overdrive",
+    "name": "Forced March",
     "description": "Hero and worker speed +1% per level.",
     "category": "Specialization",
     "target": "Speed",
@@ -113,7 +113,7 @@
   },
   {
     "id": "trait_strength_upg",
-    "name": "Titanium Plating",
+    "name": "Reinforced Concrete",
     "description": "New buildings get +2% health per level.",
     "category": "Specialization",
     "target": "Strength",
@@ -125,7 +125,7 @@
   },
   {
     "id": "trait_cost_upg",
-    "name": "Efficient Logistics",
+    "name": "Central Planning",
     "description": "Buildings and workers cost 1% less per level (60% total discount cap).",
     "category": "Specialization",
     "target": "Cost",

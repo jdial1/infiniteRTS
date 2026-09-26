@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { GameState, Player, ResourceNode, Building, MapZone, LedgerEntry } from './types';
+import { GameState, Player, ResourceNode, Building, MapZone, LedgerEntry, ScoreRow, RatesReport, Unit } from './types';
+import { planRequirement, planInstalment, demolishRefund, SCORE_PER_OUTPOST, SCORE_PER_PLAN_PHASE } from './rules';
 import { constants, buildings, upgrades, icons } from '../data';
 import {
   getMascot,
@@ -30,7 +31,7 @@ export default function App() {
   const [scene, setScene] = useState<'menu' | 'playing'>('menu');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [inventory, setInventory] = useState({ wood: 0, stone: 0, gold: 0 });
-  const { socket, setSocket, connected, setConnected, isOffline, calculateRates } = useGameEngine(inventory);
+  const { socket, setSocket, connected, setConnected, isOffline } = useGameEngine();
   
   // Camera state
   const camera = useRef({ x: 0, y: 0, zoom: 1 });
@@ -47,7 +48,7 @@ export default function App() {
   const activePointers = useRef<Map<number, PointerEvent>>(new Map());
 
   // UI state
-  const [buildMode, setBuildMode] = useState<Building['type'] | null>(null);
+  const [buildMode, setBuildMode] = useState<Building['type'] | 'demolish' | null>(null);
   const [combatLogs, setCombatLogs] = useState<{ id: string; time: number; message: string; targetX: number; targetY: number; tone: 'lost' | 'gained' }[]>([]);
   const [awayReport, setAwayReport] = useState<LedgerEntry[] | null>(null);
 
@@ -89,8 +90,6 @@ export default function App() {
   const [isBuildOpen, setIsBuildOpen] = useState(false);
   const [isWorkersOpen, setIsWorkersOpen] = useState(false);
   const [isUpgradesOpen, setIsUpgradesOpen] = useState(false);
-  const [autoAssign, setAutoAssign] = useState(true);
-  const lastAutoAssignTime = useRef(0);
   const [isHelpOpen, setIsHelpOpen] = useState(false);
   const [isPlayersListOpen, setIsPlayersListOpen] = useState(false);
   const [selectedTraits, setSelectedTraits] = useState<string[]>([]);
@@ -120,7 +119,9 @@ export default function App() {
       }
     };
   }, []);
-  const rates = calculateRates();
+  const [ratesReport, setRatesReport] = useState<RatesReport | null>(null);
+  const [standings, setStandings] = useState<ScoreRow[]>([]);
+  const rates = ratesReport?.perMinute ?? { wood: 0, stone: 0, gold: 0 };
 
   // HUD Tick for updating non-react driven UI elements periodically
   const [hudTick, setHudTick] = useState(0);
@@ -129,47 +130,32 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  const ownBuildingAt = (x: number, y: number) => {
+    if (!store.state || !store.me) return null;
+    let best: Building | null = null;
+    let bestDist = Infinity;
+    for (const b of Object.values(store.state.buildings)) {
+      if (b.ownerId !== store.me.id || b.type === 'outpost') continue;
+      const d = Math.hypot(b.x - x, b.y - y);
+      const reach = ((buildings as any)[b.type]?.size || 10) + 12;
+      if (d <= reach && d < bestDist) { best = b; bestDist = d; }
+    }
+    return best;
+  };
+
   const myMiners = Object.values(store.state?.units || {}).filter(u => u.ownerId === store.me?.id && u.type === 'miner');
   const totalMiners = myMiners.length;
   const woodMiners = myMiners.filter(u => u.assignedResource === 'wood').length;
   const stoneMiners = myMiners.filter(u => u.assignedResource === 'stone').length;
   const goldMiners = myMiners.filter(u => u.assignedResource === 'gold').length;
   const unassignedMiners = myMiners.filter(u => !u.assignedResource).length;
+  const laborRatio = store.me?.laborRatio ?? null;
   const hasBase = Object.values(store.state?.buildings || {}).some(b => b.ownerId === store.me?.id && b.type === 'base');
   const myBase = Object.values(store.state?.buildings || {}).find(b => b.ownerId === store.me?.id && b.type === 'base');
   const playersMap = store.state?.players || {};
   const playersList = Object.values(playersMap);
   const playersCount = playersList.length;
 
-  // Automatic Miner Allocation logic based on current collection rates
-  useEffect(() => {
-    if (!autoAssign || !socket || !store.state || !store.me) return;
-
-    if (unassignedMiners > 0) {
-      const now = Date.now();
-      if (now - lastAutoAssignTime.current < 200) return; // limit frequency to avoid server socket spam
-      lastAutoAssignTime.current = now;
-
-      // Determine which resource has the lowest current collections rate,
-      // breaking ties by selecting whichever category has fewer assigned miners
-      const categories: ('wood' | 'stone' | 'gold')[] = ['wood', 'stone', 'gold'];
-      categories.sort((a, b) => {
-        const rateA = rates[a] || 0;
-        const rateB = rates[b] || 0;
-        if (rateA !== rateB) {
-          return rateA - rateB;
-        }
-        
-        const minersA = a === 'wood' ? woodMiners : a === 'stone' ? stoneMiners : goldMiners;
-        const minersB = b === 'wood' ? woodMiners : b === 'stone' ? stoneMiners : goldMiners;
-        return minersA - minersB;
-      });
-
-      const targetResource = categories[0];
-      socket.emit('assign_miner', { resource: targetResource, delta: 1 });
-      setHudTick(h => h + 1); // trigger state refresh
-    }
-  }, [autoAssign, unassignedMiners, rates, socket, woodMiners, stoneMiners, goldMiners]);
 
   useEffect(() => {
     // Only connect once
@@ -231,9 +217,13 @@ export default function App() {
     });
     
     s.on('player_updated', (p: Player) => {
-      if (store.state) store.state.players[p.id] = p;
       if (p.id === userId) {
+        if (store.state) store.state.players[p.id] = p;
         store.me = p;
+      } else if (store.state) {
+        // Rivals arrive without a position when they're out of sight; keep the last one we had
+        const prev = store.state.players[p.id];
+        store.state.players[p.id] = p.hidden && prev ? { ...p, x: prev.x, y: prev.y } : p;
       }
       setHudTick(h => h + 1); // trigger re-render
     });
@@ -244,6 +234,27 @@ export default function App() {
         setHudTick(h => h + 1);
       }
     });
+
+    s.on('position_corrected', (pos: { x: number; y: number }) => {
+      if (store.me) {
+        store.me.x = pos.x;
+        store.me.y = pos.y;
+      }
+    });
+
+    // What entered or left this client's vision since the last sync
+    s.on('vision', (v: { buildings: Building[], removedBuildings: string[], units: Unit[], removedUnits: string[], players: Player[], hiddenPlayers: string[] }) => {
+      if (!store.state) return;
+      v.buildings.forEach(b => { store.state!.buildings[b.id] = b; });
+      v.removedBuildings.forEach(id => { delete store.state!.buildings[id]; });
+      v.units.forEach(u => { store.state!.units[u.id] = u; });
+      v.removedUnits.forEach(id => { delete store.state!.units[id]; });
+      v.players.forEach(p => { store.state!.players[p.id] = { ...store.state!.players[p.id], ...p, hidden: false }; });
+      v.hiddenPlayers.forEach(id => { if (store.state!.players[id]) store.state!.players[id].hidden = true; });
+    });
+
+    s.on('scoreboard', (rows: ScoreRow[]) => setStandings(rows));
+    s.on('rates', (report: RatesReport) => setRatesReport(report));
 
     s.on('state_tick', (data: { players: {id: string, x: number, y: number}[], units: {id: string, x: number, y: number, state: string, inventory?: any, capacity?: number, stall?: string | null}[] }) => {
       if (!store.state) return;
@@ -305,11 +316,12 @@ export default function App() {
         // The feed is a receipt for this player's fights only; everyone else's are drawn on the map
         const shooter = store.state?.buildings[ev.from.id];
         const target = store.state?.buildings[ev.to.id];
-        if (!shooter || !target) return;
+        if (!target) return;
         if (target.ownerId === userId) {
+          const by = shooter ? `${nameOf(shooter.ownerId)}'s ${shooter.type === 'turret' ? 'turret' : 'guard tower'}` : 'An unseen turret';
           newLogs.push({ id: Math.random().toString(), time: now, tone: 'lost', targetX: ev.to.x, targetY: ev.to.y,
-            message: `${nameOf(shooter.ownerId)}'s ${shooter.type === 'turret' ? 'turret' : 'guard tower'} hit your ${target.type} (-${ev.damage})` });
-        } else if (shooter.ownerId === userId) {
+            message: `${by} hit your ${target.type} (-${ev.damage})` });
+        } else if (shooter?.ownerId === userId) {
           newLogs.push({ id: Math.random().toString(), time: now, tone: 'gained', targetX: ev.to.x, targetY: ev.to.y,
             message: `Your ${shooter.type === 'turret' ? 'turret' : 'guard tower'} hit ${nameOf(target.ownerId)}'s ${target.type} (-${ev.damage})` });
         }
@@ -485,21 +497,19 @@ export default function App() {
                }
                lastTapTime.current = now;
                // Tap / Click Interaction
-               if (buildMode && socket) {
+               if (buildMode === 'demolish' && socket) {
+                 const target = ownBuildingAt(mouse.current.x, mouse.current.y);
+                 if (target) socket.emit('demolish', target.id);
+               } else if (buildMode && socket) {
                  let canPlace = true;
                  if (buildMode !== 'base') {
                     const myBase = Object.values(store.state?.buildings || {}).find(b => b.ownerId === store.me?.id && b.type === 'base');
                     if (!myBase) {
                        alert('You must construct a Base first before building other structures!');
                        canPlace = false;
-                    } else {
-                       const dx = mouse.current.x - myBase.x;
-                       const dy = mouse.current.y - myBase.y;
-                       const distToBas = Math.sqrt(dx * dx + dy * dy);
-                       if (distToBas > 450) {
-                          alert("Cannot place here! This structure is outside your territory.");
-                          canPlace = false;
-                       }
+                    } else if (!store.state || !store.me || !isPointInTerritory(mouse.current.x, mouse.current.y, store.me.id, store.state, constants)) {
+                       alert("Cannot place here! This structure is outside your territory.");
+                       canPlace = false;
                     }
                  }
                  if (canPlace) {
@@ -1228,6 +1238,7 @@ export default function App() {
         // Draw Players
         for (const pId in store.state.players) {
           const p = store.state.players[pId];
+          if (p.hidden) continue;
           
           let img = avatarCache.current[p.id];
           if (!img) {
@@ -1272,8 +1283,34 @@ export default function App() {
           ctx.fillText(p.name, p.x, p.y - 32);
         }
 
+        // Demolish tool: ring the building under the cursor and show its refund
+        if (buildMode === 'demolish' && store.me) {
+          const target = ownBuildingAt(mouse.current.x, mouse.current.y);
+          ctx.save();
+          if (target) {
+            const refund = demolishRefund(target);
+            const r = ((buildings as any)[target.type]?.size || 10) + 10;
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, r, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = '#fca5a5';
+            ctx.font = 'bold 11px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Refund ${refund.wood}w ${refund.stone}s ${refund.gold}g`, target.x, target.y - r - 6);
+          } else {
+            ctx.fillStyle = 'rgba(248, 113, 113, 0.8)';
+            ctx.font = 'bold 10px Inter, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('DEMOLISH: pick one of your buildings', mouse.current.x, mouse.current.y - 14);
+          }
+          ctx.restore();
+        }
+
         // Draw Placement Preview if Build Mode active
-        if (buildMode && store.me) {
+        if (buildMode && buildMode !== 'demolish' && store.me) {
           ctx.globalAlpha = 0.5;
           const playerColor = store.me.color;
           const size = (buildings as any)[buildMode].size;
@@ -1368,6 +1405,7 @@ export default function App() {
 
           let img = null;
           if (buildMode === 'base') img = baseIconWhite;
+          // (demolish mode never reaches this block)
           if (buildMode === 'wall' as any) img = wallIconWhite;
           if (buildMode === 'turret' as any) img = turretIconWhite;
 
@@ -1604,6 +1642,7 @@ export default function App() {
           // 4. Draw players (with avatar icons)
           for (const pId in store.state.players) {
             const p = store.state.players[pId];
+            if (p.hidden) continue;
             const pSize = pId === store.me?.id ? 140 : 100;
             let img = avatarCache.current[p.id];
             if (!img) {
@@ -1972,7 +2011,7 @@ export default function App() {
 
                 {totalMiners === 0 ? (
                   <div className="text-center py-4 px-3 metallic-panel-inset w-full">
-                    <p className="text-xs text-zinc-400 mb-2.5 font-sans font-bold uppercase">Deploy Command Center (Base) to authorize personnel.</p>
+                    <p className="text-xs text-zinc-400 mb-2.5 font-sans font-bold uppercase">{hasBase ? 'No workers yet. Requisition them from Structures.' : 'Deploy Command Center (Base) to authorize personnel.'}</p>
                     <button 
                       onClick={() => {
                         setIsBuildOpen(true);
@@ -1991,11 +2030,11 @@ export default function App() {
                         🔒 Construct Faction Base to assign labor
                       </div>
                     )}
-                    {/* Auto Assign switch */}
+                    {/* Standing orders switch: the player sets the split, the server keeps it */}
                     <button
                       onClick={() => {
                         if (!hasBase) return;
-                        setAutoAssign(!autoAssign);
+                        socket?.emit('set_labor_ratio', laborRatio ? null : { wood: 1, stone: 1, gold: 1 });
                       }}
                       disabled={!hasBase}
                       className={`flex justify-between items-center metallic-panel-inset hover:bg-zinc-800 px-2.5 py-1.5 h-10 w-full transition-colors font-sans text-left ${
@@ -2003,11 +2042,11 @@ export default function App() {
                       }`}
                     >
                       <div className="flex flex-col">
-                        <span className="text-xs font-display tracking-wider text-zinc-200 leading-none uppercase">Auto-Assign Operations</span>
-                        <span className="text-[8.5px] text-cyan-400 font-bold mt-0.5 uppercase">Optimize resource logistics</span>
+                        <span className="text-xs font-display tracking-wider text-zinc-200 leading-none uppercase">Standing Orders</span>
+                        <span className="text-[8.5px] text-cyan-400 font-bold mt-0.5 uppercase">{laborRatio ? `Keep the split ${laborRatio.wood}:${laborRatio.stone}:${laborRatio.gold}` : 'Off: assign by hand'}</span>
                       </div>
-                      <div className={`relative inline-flex h-5.5 w-10 shrink-0 border-2 border-transparent transition-colors duration-200 ease-in-out ${autoAssign ? 'bg-cyan-600' : 'bg-zinc-800'}`}>
-                        <span className={`pointer-events-none inline-block h-4.5 w-4.5 transform bg-white shadow transition duration-200 ease-in-out ${autoAssign ? 'translate-x-4.5' : 'translate-x-0'}`} />
+                      <div className={`relative inline-flex h-5.5 w-10 shrink-0 border-2 border-transparent transition-colors duration-200 ease-in-out ${laborRatio ? 'bg-cyan-600' : 'bg-zinc-800'}`}>
+                        <span className={`pointer-events-none inline-block h-4.5 w-4.5 transform bg-white shadow transition duration-200 ease-in-out ${laborRatio ? 'translate-x-4.5' : 'translate-x-0'}`} />
                       </div>
                     </button>
 
@@ -2076,19 +2115,29 @@ export default function App() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5">
+                            {laborRatio && (
+                              <span className="text-[9px] font-sans text-zinc-500 font-bold uppercase" title="Workers on this resource now">{r.val} now</span>
+                            )}
                             <button
-                              onClick={() => socket?.emit('assign_miner', { resource: r.id, delta: -1 })}
-                              disabled={r.val === 0 || !hasBase}
+                              onClick={() => laborRatio
+                                ? socket?.emit('set_labor_ratio', { ...laborRatio, [r.id]: Math.max(0, laborRatio[r.id as ResourceNode['type']] - 1) })
+                                : socket?.emit('assign_miner', { resource: r.id, delta: -1 })}
+                              disabled={(laborRatio ? laborRatio[r.id as ResourceNode['type']] === 0 : r.val === 0) || !hasBase}
                               className="w-8 h-8 flex items-center justify-center metallic-button disabled:opacity-25 text-white font-black text-sm active:scale-[0.98] cursor-pointer"
                             >
                               -
                             </button>
-                            <span className="w-8 text-center font-display font-extrabold text-cyan-400 text-sm py-1 bg-zinc-950 border border-black shadow-[inset_0_2px_4px_rgba(0,0,0,1)]">
-                              {r.val}
+                            <span
+                              title={laborRatio ? 'Share of the split' : 'Workers assigned'}
+                              className="w-8 text-center font-display font-extrabold text-cyan-400 text-sm py-1 bg-zinc-950 border border-black shadow-[inset_0_2px_4px_rgba(0,0,0,1)]"
+                            >
+                              {laborRatio ? laborRatio[r.id as ResourceNode['type']] : r.val}
                             </span>
                             <button
-                              onClick={() => socket?.emit('assign_miner', { resource: r.id, delta: 1 })}
-                              disabled={autoAssign || unassignedMiners === 0 || !hasBase}
+                              onClick={() => laborRatio
+                                ? socket?.emit('set_labor_ratio', { ...laborRatio, [r.id]: Math.min(9, laborRatio[r.id as ResourceNode['type']] + 1) })
+                                : socket?.emit('assign_miner', { resource: r.id, delta: 1 })}
+                              disabled={(laborRatio ? laborRatio[r.id as ResourceNode['type']] >= 9 : unassignedMiners === 0) || !hasBase}
                               className="w-8 h-8 flex items-center justify-center metallic-button disabled:opacity-25 text-white font-black text-sm active:scale-[0.98] cursor-pointer"
                             >
                               +
@@ -2096,6 +2145,31 @@ export default function App() {
                           </div>
                         </div>
                       ))}
+                    </div>
+
+                    {/* Rates: which route pays, over the last minute */}
+                    <div className="metallic-panel-inset p-1.5">
+                      <div className="text-[9px] font-display uppercase tracking-widest text-zinc-500 mb-1">Delivered, last minute</div>
+                      {(ratesReport?.depots.length ?? 0) === 0 ? (
+                        <div className="text-[10px] font-sans text-zinc-500">Nothing delivered yet.</div>
+                      ) : (
+                        <div className="space-y-0.5 max-h-28 overflow-y-auto">
+                          {ratesReport!.depots.map(d => (
+                            <button
+                              key={d.id}
+                              onClick={() => { camera.current.x = d.x; camera.current.y = d.y; autoFollow.current = false; }}
+                              className="w-full flex items-center justify-between gap-2 text-[10px] font-sans font-bold text-zinc-300 hover:text-white text-left"
+                            >
+                              <span className="truncate capitalize">{d.label}</span>
+                              <span className="shrink-0 flex gap-1.5">
+                                {d.wood > 0 && <span className="text-amber-500">{d.wood}w</span>}
+                                {d.stone > 0 && <span className="text-slate-300">{d.stone}s</span>}
+                                {d.gold > 0 && <span className="text-yellow-400">{d.gold}g</span>}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -2256,6 +2330,25 @@ export default function App() {
                         )}
                       </div>
                     </button>
+
+                    {/* Demolish: refactoring is free, but a damaged building refunds only its remaining health */}
+                    <button
+                      onClick={() => setBuildMode(buildMode === 'demolish' ? null : 'demolish')}
+                      disabled={!hasBase}
+                      className={`flex items-center justify-between px-3 h-10 transition-all cursor-pointer ${
+                        !hasBase
+                          ? 'metallic-button opacity-40 grayscale pointer-events-none text-zinc-500'
+                          : buildMode === 'demolish'
+                            ? 'metallic-button-selected text-white active:scale-[0.98]'
+                            : 'metallic-button text-white active:scale-[0.98]'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <DynamicIcon name="Trash2" library="lucide" className="w-4 h-4 text-red-400" />
+                        <span className="text-[11px] uppercase font-display tracking-widest">Demolish</span>
+                      </div>
+                      <span className="text-[9px] font-sans font-bold text-zinc-400 uppercase">Full refund if undamaged</span>
+                    </button>
                   </div>
                 </div>
               );
@@ -2279,7 +2372,7 @@ export default function App() {
                 <div className="flex flex-col gap-2.5">
                   <div className="flex justify-between items-center border-b-2 border-zinc-700 pb-1.5 font-bold">
                     <span className="font-display tracking-widest text-sm uppercase flex items-center gap-2 text-cyan-400">
-                      <DynamicIcon name={icons.ui.upgrade.name} library={icons.ui.upgrade.library} className="w-4 h-4 text-cyan-400" /> Tech Upgrades
+                      <DynamicIcon name={icons.ui.upgrade.name} library={icons.ui.upgrade.library} className="w-4 h-4 text-cyan-400" /> Directives
                     </span>
                     <button 
                       onClick={() => setIsUpgradesOpen(false)} 
@@ -2294,6 +2387,38 @@ export default function App() {
                       <span>🔒 Deploy Base to authorize research</span>
                     </div>
                   )}
+
+                  {/* The Plan: the infinite sink, delivered to the Command Base in phases that never stop growing */}
+                  {(() => {
+                    const plan = store.me?.plan ?? { phase: 0, delivered: { wood: 0, stone: 0, gold: 0 } };
+                    const need = planRequirement(plan.phase);
+                    const instalment = planInstalment(plan.phase);
+                    const canGive = hasBase && (['wood', 'stone', 'gold'] as const).some(t => inventory[t] >= 1 && plan.delivered[t] < need[t]);
+                    return (
+                      <div className={`metallic-panel-inset p-2 flex flex-col gap-1.5 ${!hasBase ? 'opacity-35 grayscale' : ''}`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-display tracking-widest uppercase text-red-400">The Plan · Phase {plan.phase + 1}</span>
+                          <span className="text-[9px] font-sans font-bold text-zinc-500 uppercase">{plan.phase} fulfilled · +{SCORE_PER_PLAN_PHASE} each</span>
+                        </div>
+                        {(['wood', 'stone', 'gold'] as const).map(t => (
+                          <div key={t} className="flex items-center gap-2 text-[9px] font-sans font-bold uppercase">
+                            <span className="w-9 text-zinc-400">{t}</span>
+                            <div className="flex-1 h-1.5 bg-zinc-950 border border-black">
+                              <div className="h-full bg-red-600" style={{ width: `${Math.min(100, (plan.delivered[t] / need[t]) * 100)}%` }} />
+                            </div>
+                            <span className="w-20 text-right text-zinc-300">{plan.delivered[t]} / {need[t]}</span>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => socket?.emit('plan_deliver')}
+                          disabled={!canGive}
+                          className={`h-8 rounded-sm font-display font-bold text-[10px] uppercase tracking-widest ${canGive ? 'metallic-button-selected text-white' : 'metallic-button opacity-50 text-zinc-500 cursor-not-allowed'}`}
+                        >
+                          Deliver to the Plan (up to {instalment.wood}w {instalment.stone}s {instalment.gold}g)
+                        </button>
+                      </div>
+                    );
+                  })()}
 
                   <div className="flex flex-col gap-1 pr-0.5 max-h-[30vh] sm:max-h-[40vh] overflow-y-auto">
                     {upgrades.filter(upg => !upg.requiredTrait || store.me?.traits?.includes(upg.requiredTrait as any)).map(upg => {
@@ -2466,11 +2591,12 @@ export default function App() {
               </button>
             </div>
             <div className="space-y-3 text-sm font-sans text-zinc-300">
-              <p><strong className="text-white font-display tracking-widest uppercase">Objective:</strong> Deploy command center, conscript workers, and expand influence.</p>
-              <p><strong className="text-white font-display tracking-widest uppercase">Navigation:</strong> Engage <kbd className="metallic-panel border-none px-1 rounded-sm mx-0.5 font-bold shadow-none text-cyan-400">W/A/S/D</kbd> engines or optical drag. Tap map to initiate unit relocation. Pinch to zoom optics.</p>
-              <p><strong className="text-white font-display tracking-widest uppercase">Extraction:</strong> Direct command agent to raw elements for manual yield.</p>
-              <p><strong className="text-white font-display tracking-widest uppercase">Construction:</strong> Utilize Operations interface to deploy <strong className="text-cyan-400 drop-shadow-md">Command Base</strong>. Base authorization unlocks worker logistics and defensive arrays.</p>
-              <p><strong className="text-white font-display tracking-widest uppercase">Logistics:</strong> Approve workers and distribute labor assignments optimally.</p>
+              <p><strong className="text-white font-display tracking-widest uppercase">Objective:</strong> Grow your economy and hold ground. The standings count only two things: outposts held and phases of the Plan fulfilled.</p>
+              <p><strong className="text-white font-display tracking-widest uppercase">Movement:</strong> <kbd className="metallic-panel border-none px-1 rounded-sm mx-0.5 font-bold shadow-none text-cyan-400">W/A/S/D</kbd> or tap the map to walk your commander. Drag to pan, pinch or scroll to zoom.</p>
+              <p><strong className="text-white font-display tracking-widest uppercase">Ground:</strong> Stand in a neutral outpost's ring to claim it, or in a rival's to neutralize it. Your borders are where you can build and where your workers can mine.</p>
+              <p><strong className="text-white font-display tracking-widest uppercase">Labour:</strong> Resources only arrive when a worker carries them to your base, an outpost, or a forward depot. Standing Orders keep the worker split you set. A stalled worker tells you why.</p>
+              <p><strong className="text-white font-display tracking-widest uppercase">The Plan:</strong> Deliver to your Command Base in phases. Every phase asks for more than the last, and there is always another.</p>
+              <p><strong className="text-white font-display tracking-widest uppercase">Losses:</strong> Everything a rival takes is written in your ledger, including while you are away. Demolishing your own building refunds it in full when undamaged.</p>
             </div>
             <div className="mt-6">
               <button 
@@ -2488,7 +2614,7 @@ export default function App() {
           <div className="metallic-panel p-6 max-w-sm w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
             <div className="flex justify-between items-center mb-4 border-b-2 border-zinc-700 pb-2">
               <h2 className="text-xl font-display uppercase tracking-widest font-bold flex items-center gap-2 text-cyan-400">
-                <DynamicIcon name={icons.ui.settings.name} library={icons.ui.settings.library} className="w-5 h-5" /> Optical Overlay Parameters
+                <DynamicIcon name={icons.ui.settings.name} library={icons.ui.settings.library} className="w-5 h-5" /> Map Overlays
               </h2>
               <button onClick={() => setIsSettingsOpen(false)} className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm transition-colors">
                 <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-5 h-5" />
@@ -2545,7 +2671,7 @@ export default function App() {
           <div className="metallic-panel p-6 max-w-sm w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white">
             <div className="flex justify-between items-center mb-4 border-b-2 border-zinc-700 pb-2">
               <h2 className="text-xl font-display font-bold uppercase tracking-widest flex items-center gap-2 text-cyan-400">
-                <DynamicIcon name={icons.ui.users.name} library={icons.ui.users.library} className="w-5 h-5 animate-pulse" /> Active Agents ({playersCount})
+                <DynamicIcon name={icons.ui.users.name} library={icons.ui.users.library} className="w-5 h-5 animate-pulse" /> Standings ({standings.length})
               </h2>
               <button onClick={() => setIsPlayersListOpen(false)} className="metallic-button p-1 text-zinc-400 hover:text-white rounded-sm transition-colors">
                 <DynamicIcon name={icons.ui.close.name} library={icons.ui.close.library} className="w-5 h-5" />
@@ -2553,145 +2679,88 @@ export default function App() {
             </div>
             
             <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-              {(() => {
-                const playersWithScores = playersList.map(player => {
-                  const upgradeScore = Object.values(player.upgrades || {}).reduce((a, b) => a + b, 0) * 150;
-                  const playerBuildings = Object.values(store.state?.buildings || {}).filter(b => b.ownerId === player.id);
-                  const buildingScore = playerBuildings.reduce((sum, b) => {
-                    if (b.type === 'base') return sum + 500;
-                    if (b.type === 'turret') return sum + 200;
-                    if (b.type === 'wall') return sum + 50;
-                    return sum;
-                  }, 0);
-                  const playerUnits = Object.values(store.state?.units || {}).filter(u => u.ownerId === player.id);
-                  const unitScore = playerUnits.length * 100;
-                  const activityScore = upgradeScore + buildingScore + unitScore + 10;
-                  
-                  const wVal = player.inventory?.wood || 0;
-                  const sVal = player.inventory?.stone || 0;
-                  const gVal = player.inventory?.gold || 0;
-                  const rawResourcePoints = (wVal + sVal + gVal * 3) * 0.1;
-
-                  // Limit resources contribution to 10% maximum of the total score
-                  const resourceScore = Math.min(rawResourcePoints, activityScore / 9);
-                  const totalScore = Math.floor(activityScore + resourceScore);
-
-                  return {
-                    player,
-                    upgradeScore,
-                    buildingScore,
-                    unitScore,
-                    resourceScore,
-                    totalScore,
-                    buildingsCount: playerBuildings.length,
-                    unitsCount: playerUnits.length
-                  };
-                });
-
-                // Sort players descending by their total calculated score
-                playersWithScores.sort((a, b) => b.totalScore - a.totalScore);
-
-                return playersWithScores.map(({ player, totalScore, upgradeScore, buildingScore, unitScore, resourceScore, buildingsCount, unitsCount }, rank) => {
-                  const isMe = player.id === store.me?.id;
-                  return (
-                    <div 
-                      key={player.id} 
-                      className={`flex flex-col p-2.5 rounded-sm transition-all gap-1.5 ${
-                        isMe ? 'metallic-button-selected' : 'metallic-panel-inset text-zinc-300'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between w-full">
-                        <div className="flex items-center gap-2.5">
-                          {/* Rank indicator badge */}
-                          <span className={`text-[9px] font-mono font-bold w-4.5 h-4.5 rounded flex items-center justify-center ${
-                            rank === 0 ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
-                            rank === 1 ? 'bg-slate-300/20 text-slate-300 border border-slate-300/30' :
-                            rank === 2 ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30' :
-                            'bg-gray-800 text-gray-400'
-                          }`}>
-                            #{rank + 1}
-                          </span>
-
-                          {/* Mascot Icon */}
-                          {(() => {
-                            const mascot = getMascot(player.traits);
-                            if (!mascot) return null;
-                            return (
-                              <div
-                                className="w-8 h-8 rounded bg-black/40 border flex items-center justify-center shadow-inner shrink-0"
-                                style={{ borderColor: mascot.color + '40' }}
-                                title={mascot.label}
-                              >
-                                <DynamicIcon name={mascot.name} library={mascot.library} size={20} style={{ color: mascot.color }} />
-                              </div>
-                            );
-                          })()}
-                          
-                          <div className="relative">
-                            <img 
-                              src={`https://api.dicebear.com/7.x/croodles/svg?seed=${encodeURIComponent(player.name || player.id)}`} 
-                              className="w-8 h-8 rounded-full border bg-gray-950 p-0.5 shadow dynamic-player-border"
-                              style={{ '--player-color': player.color } as React.CSSProperties}
-                              alt={player.name}
-                              referrerPolicy="no-referrer"
-                            />
-                            <span 
-                              className="absolute bottom-0 right-0 w-2 h-2 rounded-full border border-gray-800 dynamic-player-bg"
-                              style={{ '--player-color': player.color } as React.CSSProperties}
-                            />
+              {standings.length === 0 && (
+                <div className="text-center text-xs text-zinc-500 font-sans py-4">Waiting for the standings…</div>
+              )}
+              {standings.map((row, rank) => {
+                const isMe = row.id === store.me?.id;
+                const known = store.state?.players[row.id];
+                const canLocate = isMe || (known && !known.hidden);
+                const mascot = getMascot(row.traits);
+                return (
+                  <div
+                    key={row.id}
+                    className={`flex flex-col p-2.5 rounded-sm transition-all gap-1.5 ${isMe ? 'metallic-button-selected' : 'metallic-panel-inset text-zinc-300'}`}
+                  >
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <span className={`text-[9px] font-mono font-bold w-4.5 h-4.5 rounded flex items-center justify-center ${
+                          rank === 0 ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/30' :
+                          rank === 1 ? 'bg-slate-300/20 text-slate-300 border border-slate-300/30' :
+                          rank === 2 ? 'bg-amber-600/20 text-amber-500 border border-amber-600/30' :
+                          'bg-gray-800 text-gray-400'
+                        }`}>
+                          #{rank + 1}
+                        </span>
+                        {mascot && (
+                          <div
+                            className="w-8 h-8 rounded bg-black/40 border flex items-center justify-center shadow-inner shrink-0"
+                            style={{ borderColor: mascot.color + '40' }}
+                            title={mascot.label}
+                          >
+                            <DynamicIcon name={mascot.name} library={mascot.library} size={20} style={{ color: mascot.color }} />
                           </div>
-                          
-                          <div className="flex flex-col">
-                            <span className="font-bold text-xs flex items-center gap-1 text-white">
-                              {(() => {
-                                const mascot = getMascot(player.traits);
-                                return mascot ? `${mascot.label} - ${player.name}` : player.name;
-                              })()}
-                              {isMe && <span className="text-[8px] bg-indigo-500/30 text-indigo-300 font-extrabold px-1 rounded">YOU</span>}
-                            </span>
-                            <span className="text-[9px] text-gray-450 font-mono">
-                              X: {Math.round(player.x)}, Y: {Math.round(player.y)}
-                            </span>
-                          </div>
+                        )}
+                        <div className="relative shrink-0">
+                          <img
+                            src={`https://api.dicebear.com/7.x/croodles/svg?seed=${encodeURIComponent(row.name || row.id)}`}
+                            className="w-8 h-8 rounded-full border bg-gray-950 p-0.5 shadow dynamic-player-border"
+                            style={{ '--player-color': row.color } as React.CSSProperties}
+                            alt={row.name}
+                            referrerPolicy="no-referrer"
+                          />
+                          <span
+                            className={`absolute bottom-0 right-0 w-2 h-2 rounded-full border border-gray-800 ${row.online ? 'dynamic-player-bg' : 'bg-zinc-600'}`}
+                            style={{ '--player-color': row.color } as React.CSSProperties}
+                          />
                         </div>
-
-                        {/* Beautiful Score Badge */}
-                        <div className="flex flex-col items-end shrink-0">
-                          <span className="text-sm font-display tracking-widest font-black text-cyan-400">
-                            ★ {totalScore}
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-bold text-xs flex items-center gap-1 text-white truncate">
+                            {mascot ? `${mascot.label} - ${row.name}` : row.name}
+                            {isMe && <span className="text-[8px] bg-indigo-500/30 text-indigo-300 font-extrabold px-1 rounded">YOU</span>}
                           </span>
-                          <span className="text-[8px] text-zinc-500 uppercase tracking-widest font-bold">
-                            Score
-                          </span>
+                          <span className="text-[9px] text-zinc-500 font-sans uppercase">{row.online ? 'On the map' : 'Away'}</span>
                         </div>
                       </div>
-
-                      {/* Score breakdown bar & indicators */}
-                      <div className="flex items-center justify-between pt-1 border-t-2 border-zinc-700/50 text-[9px] text-zinc-400 font-sans font-bold">
-                        <div className="flex gap-2">
-                          <span title="Buildings score">🏰 <strong className="text-zinc-200">{buildingsCount}</strong></span>
-                          <span title="Miners score">👷 <strong className="text-zinc-200">{unitsCount}</strong></span>
-                          <span title="Upgrades score">⚙️ <strong className="text-cyan-400">L{(upgradeScore / 150)}</strong></span>
-                          <span title="Inventory score representing 10% max of score">🎒 <strong className="text-zinc-200">+{Math.floor(resourceScore)}</strong></span>
-                        </div>
-
+                      <div className="flex flex-col items-end shrink-0">
+                        <span className="text-sm font-display tracking-widest font-black text-cyan-400">★ {row.score}</span>
+                        <span className="text-[8px] text-zinc-500 uppercase tracking-widest font-bold">Score</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between pt-1 border-t-2 border-zinc-700/50 text-[9px] text-zinc-400 font-sans font-bold">
+                      <div className="flex gap-2">
+                        <span title={`Outposts held: ${SCORE_PER_OUTPOST} each`}>🏰 <strong className="text-zinc-200">{row.outposts}</strong> ground</span>
+                        <span title={`Plan phases fulfilled: ${SCORE_PER_PLAN_PHASE} each`}>★ <strong className="text-red-400">{row.planPhase}</strong> plan</span>
+                      </div>
+                      {canLocate && (
                         <button
                           onClick={() => {
+                            const target = isMe ? store.me! : known!;
                             autoFollow.current = false;
                             moveTarget.current = null;
-                            camera.current.x = player.x;
-                            camera.current.y = player.y;
+                            camera.current.x = target.x;
+                            camera.current.y = target.y;
                             setIsPlayersListOpen(false);
                           }}
                           className="metallic-button px-2 py-0.5 text-[9px] font-display uppercase tracking-widest text-cyan-400 rounded-sm active:scale-[0.98]"
                         >
                           Locate
                         </button>
-                      </div>
+                      )}
                     </div>
-                  );
-                });
-              })()}
+                  </div>
+                );
+              })}
             </div>
 
             <div className="mt-4">
@@ -2741,7 +2810,7 @@ export default function App() {
                   onClick={() => setSelectedTraits(prev => prev.includes('strength') ? prev.filter(t => t !== 'strength') : (prev.length < 2 ? [...prev, 'strength'] : prev))}
                   className={`flex flex-col p-3 transition-colors cursor-pointer disabled:opacity-50 ${selectedTraits.includes('strength') ? 'metallic-button-selected' : 'metallic-button text-zinc-300'}`}>
                   <strong className="font-display tracking-widest uppercase text-lg">Fortitude</strong>
-                  <span className="text-[11px] font-sans font-bold text-zinc-400">Adds 50% more health to your buildings and units.</span>
+                  <span className="text-[11px] font-sans font-bold text-zinc-400">Adds 50% more health to your buildings.</span>
                </button>
                <button 
                   onClick={() => setSelectedTraits(prev => prev.includes('cost') ? prev.filter(t => t !== 'cost') : (prev.length < 2 ? [...prev, 'cost'] : prev))}
@@ -2774,7 +2843,7 @@ export default function App() {
           <div className="metallic-panel p-4 sm:p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,0,0,0.8)] text-white my-auto">
             <h2 className="text-xl font-display uppercase tracking-widest text-cyan-400 font-bold mb-1">While You Were Away</h2>
             <p className="text-[10px] text-zinc-500 font-sans uppercase tracking-widest mb-3">
-              {awayReport.filter(e => e.kind === 'lost').length} lost · {awayReport.filter(e => e.kind === 'gained').length} gained
+              Commissariat report · {awayReport.filter(e => e.kind === 'lost').length} lost · {awayReport.filter(e => e.kind === 'gained').length} gained
             </p>
             <div className="space-y-1 max-h-[45vh] overflow-y-auto pr-1">
               {awayReport.map(e => (
