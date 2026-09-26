@@ -85,4 +85,14 @@ class GameStoreTest {
         assertTrue(first.contains("0,0") && first.contains("-1,-1"))
         assertTrue(s.chunksToRequest(0.0, 0.0, 500.0).isEmpty())
     }
+
+    @Test fun reconnectingStartsTheMapOver() {
+        val s = store()
+        s.chunksToRequest(0.0, 0.0, 500.0)
+        s.apply("chunk_data", """{"resources":{"r1":{"id":"r1","type":"wood","x":5,"y":5,"amount":900}},"zones":{}}""")
+        // The app slept; the node was mined out meanwhile, and the server resends the world
+        s.apply("init", """{"players":{"me":{"id":"me","name":"Player me","x":10,"y":20}},"buildings":{},"units":{},"zones":{},"resources":{}}""")
+        assertTrue(s.resources.isEmpty())
+        assertTrue(s.chunksToRequest(0.0, 0.0, 500.0).contains("0,0"))
+    }
 }

@@ -60,6 +60,9 @@ class GameStore(val config: GameConfig, val myId: String) {
     /** Resource amounts when first seen, for drawing how depleted a node is. */
     val resourceMax = HashMap<String, Double>()
 
+    /** Chunks already asked for since the last init. */
+    private val requestedChunks = HashSet<String>()
+
     val me: Player? get() = players[myId]
     val myBase: Building? get() = buildings.values.firstOrNull { it.ownerId == myId && it.type == "base" }
     val myWorkers: List<Worker> get() = workers.values.filter { it.ownerId == myId }
@@ -72,8 +75,11 @@ class GameStore(val config: GameConfig, val myId: String) {
                 players.clear(); players.putAll(init.players)
                 buildings.clear(); buildings.putAll(init.buildings)
                 workers.clear(); workers.putAll(init.units)
-                resources.putAll(init.resources)
-                zones.putAll(init.zones)
+                // A reconnect (after the app slept) starts over: resources come per chunk, so ask again
+                resources.clear(); resources.putAll(init.resources)
+                zones.clear(); zones.putAll(init.zones)
+                resourceMax.clear()
+                requestedChunks.clear()
                 init.resources.values.forEach { resourceMax.putIfAbsent(it.id, it.amount) }
                 me?.let { inventory = it.inventory }
                 initialized = true
@@ -211,7 +217,6 @@ class GameStore(val config: GameConfig, val myId: String) {
     fun nameOf(id: String?): String = id?.let { players[it]?.name } ?: "Unknown"
 
     // --- Map chunks: resources and zones are sent per chunk, on request ---
-    private val requestedChunks = HashSet<String>()
 
     /** Chunk keys around the camera and the hero that haven't been requested yet (and marks them requested). */
     fun chunksToRequest(cameraX: Double, cameraY: Double, viewRadius: Double): List<String> {

@@ -880,6 +880,12 @@ function generateChunk(cx: number, cy: number) {
         lastSeenAt.set(userId, Date.now());
         io.emit('player_left', userId);
       }
+      // The last commander left: save now. Cloud Run throttles an instance with no open connections
+      // and later stops it, so the world rests from here until someone connects again.
+      if (userToSocket.size === 0) {
+        console.log('No players connected: saving the world before it rests');
+        saveNow();
+      }
     });
   });
 
@@ -1275,7 +1281,8 @@ function generateChunk(cx: number, cy: number) {
     return saving;
   };
   setInterval(saveNow, SAVE_INTERVAL_MS);
-  // Cloud Run sends SIGTERM and allows a few seconds before stopping the container
+  // Cloud Run sends SIGTERM (a new revision, or an idle instance scaling to zero) and allows a few
+  // seconds before stopping the container
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, async () => {
       const now = Date.now();

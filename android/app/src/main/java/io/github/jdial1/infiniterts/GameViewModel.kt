@@ -29,6 +29,8 @@ enum class Scene { MENU, PLAYING }
 enum class Panel { WORKERS, STRUCTURES, DIRECTIVES }
 enum class BuildMode(val type: String?) { BASE("base"), WALL("wall"), TURRET("turret"), DEMOLISH(null) }
 
+private const val RELEASE_AFTER_BACKGROUND_MS = 30_000L
+
 class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Listener {
     val config: GameConfig = app.assets.let { a ->
         GameConfig.parse(
@@ -61,6 +63,16 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
 
     private var connection: GameConnection? = null
     private var tokenRetries = 0
+
+    // In the background the app lets go of its connection, so an idle phone never keeps the server
+    // awake; with nobody connected the server saves, rests, and scales to zero.
+    private var released = false
+    private val release = Runnable {
+        connection?.disconnect()
+        connection = null
+        connected = false
+        released = true
+    }
 
     // --- Screen state ---
     var scene by mutableStateOf(Scene.MENU)
@@ -96,6 +108,8 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
 
     private fun changeSession(next: Session?) {
         if (next?.uid == session?.uid) return
+        main.removeCallbacks(release)
+        released = false
         connection?.disconnect()
         connection = null
         connected = false
@@ -181,7 +195,23 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
         }
     }
 
+    /** The app left the screen. A short grace covers quick switches and Google's account picker. */
+    fun onAppBackgrounded() {
+        main.removeCallbacks(release)
+        main.postDelayed(release, RELEASE_AFTER_BACKGROUND_MS)
+    }
+
+    /** Back on screen: reconnect if the connection was released. The server replays the world and the away report. */
+    fun onAppForegrounded() {
+        main.removeCallbacks(release)
+        if (released) {
+            released = false
+            session?.let { connect(it, forceRefresh = false) }
+        }
+    }
+
     override fun onCleared() {
+        main.removeCallbacks(release)
         connection?.disconnect()
         super.onCleared()
     }

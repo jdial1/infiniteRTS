@@ -77,6 +77,8 @@ The React web client was replaced by a native Android app (`android/`, Kotlin an
 
 ## Cost warning
 
+* **The world rests when nobody is playing.** To save cost, the server scales to zero when no one is connected, and the world pauses until someone returns. Workers don't mine and turrets don't fire while it sleeps. Losses while away still happen whenever anyone else is online, and the ledger records them as before. The Android app releases its connection after 30 seconds in the background, so a phone in a pocket doesn't keep the world awake.
+
 * **Losses while away are deliberate.** The ledger explains them; it doesn't prevent them. Absent heroes no longer hold ground. Whether absent players also need a protection window is a question for the first playtest.
 * **Neighbours are required.** Watchful Calm needs rivals at the border. An endless map with a small population will feel like Assembly without its second half.
 * **Scale.** Vision is computed per player twice a second, against every building and unit. That's fine for dozens of players. Hundreds will need spatial indexing.

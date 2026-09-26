@@ -30,6 +30,10 @@ To run the protocol test against that server as well:
 GAME_SERVER_URL=http://localhost:3000 ./gradlew test
 ```
 
+## Sleeping
+
+After 30 seconds in the background, the app releases its connection. It reconnects when it comes back to the screen, and the server's away report covers anything that happened meanwhile. When no player is connected, the game server saves the world and sleeps, so billing stops (see `docs/DEPLOY.md`). The first player back wakes it with a cold start of a few seconds.
+
 ## Layout
 
 | Package | What's in it |

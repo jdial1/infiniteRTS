@@ -5,7 +5,7 @@ The game runs in the Firebase project `infiniterts-6c5ab` (project number `34611
 | Piece | Service | Why |
 | --- | --- | --- |
 | Sign-in | Firebase Authentication (Google provider) | Every socket carries a Firebase ID token, and the server verifies it before the player reaches the map |
-| The game server | Cloud Run (`infinite-rts-server`, `us-central1`) | The world is a 10 ticks-per-second authoritative simulation over websockets (workers, turrets, captures, fog). Cloud Functions can't hold that, so the server runs as one always-on container |
+| The game server | Cloud Run (`infinite-rts-server`, `us-central1`) | The world is a 10 ticks-per-second authoritative simulation over websockets (workers, turrets, captures, fog). Cloud Functions can't hold that, so the server runs as one container that sleeps when nobody is playing |
 | The saved world | Cloud Firestore | The server saves the whole world every 30 s and on shutdown (gzipped, split across documents in `worlds/main`) and loads it on start |
 | The client | The Android app in `android/` | Built and installed from Gradle; see [android/README.md](../android/README.md) |
 
@@ -25,7 +25,7 @@ export PROJECT=infiniterts-6c5ab
 gcloud config set project "$PROJECT"
 gcloud run deploy infinite-rts-server --source . --region us-central1 \
   --allow-unauthenticated \
-  --min-instances 1 --max-instances 1 --no-cpu-throttling \
+  --min-instances 0 --max-instances 1 --cpu-throttling \
   --session-affinity --timeout 3600 --memory 1Gi \
   --set-env-vars "FIREBASE_PROJECT_ID=$PROJECT"
 ```
@@ -33,11 +33,12 @@ gcloud run deploy infinite-rts-server --source . --region us-central1 \
 Why those flags:
 
 * **`--max-instances 1`:** the world lives in one process's memory. A second instance would be a second, disconnected world.
-* **`--min-instances 1 --no-cpu-throttling`:** the world keeps running while nobody is connected (workers mine, turrets fire, and absent players get an away report). Without these flags, Cloud Run freezes the simulation between requests.
+* **`--min-instances 0 --cpu-throttling`:** the server sleeps when nobody is playing. An open socket counts as a request, so the simulation runs at full speed while anyone is connected. When the last player leaves, the server saves the world at once. Cloud Run then throttles the idle instance and stops it after about 15 minutes (SIGTERM saves again), and billing stops. The next player to connect wakes it: a cold start of a few seconds loads the world from Firestore, and Socket.IO keeps retrying until it's up. While it sleeps, the world pauses: nobody mines, and nothing is taken from anyone.
+  * For a world that keeps running with nobody online (workers mine through the night, turrets keep fighting), use `--min-instances 1 --no-cpu-throttling` instead. It costs one always-on instance, about $50 a month at 1 vCPU and 1 GiB.
 * **`--session-affinity --timeout 3600`:** websockets stay on the instance for up to an hour, and Socket.IO reconnects on its own after that.
 * **`--allow-unauthenticated`:** the service is public at the HTTP level; players are authenticated per socket by their Firebase ID token.
 
-On SIGTERM the server saves the world before it exits, and the new revision loads it.
+On SIGTERM (a new revision, or scaling to zero) the server saves the world before it exits, and the next instance loads it.
 
 ## Firestore rules
 
