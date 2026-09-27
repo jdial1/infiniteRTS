@@ -4,7 +4,9 @@ import android.app.Application
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -13,9 +15,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.jdial1.infiniterts.auth.AuthRepository
 import io.github.jdial1.infiniterts.auth.Session
+import io.github.jdial1.infiniterts.game.ConnectionLog
+import io.github.jdial1.infiniterts.game.ConnectionLog.Level
 import io.github.jdial1.infiniterts.game.GameStore
 import io.github.jdial1.infiniterts.model.Building
 import io.github.jdial1.infiniterts.model.GameConfig
+import io.github.jdial1.infiniterts.model.GameJson
+import io.github.jdial1.infiniterts.model.ServerStatus
 import io.github.jdial1.infiniterts.model.LaborRatio
 import io.github.jdial1.infiniterts.net.GameConnection
 import io.github.jdial1.infiniterts.rules.Rules
@@ -30,6 +36,10 @@ enum class Panel { WORKERS, STRUCTURES, DIRECTIVES }
 enum class BuildMode(val type: String?) { BASE("base"), WALL("wall"), TURRET("turret"), DEMOLISH(null) }
 
 private const val RELEASE_AFTER_BACKGROUND_MS = 30_000L
+private const val LOG_TAG = "InfiniteRTS"
+// A sleeping server takes a few seconds to wake; say so if the world hasn't arrived by then
+private const val SLOW_CONNECT_MS = 15_000L
+private const val STUCK_CONNECT_MS = 60_000L
 
 class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Listener {
     val config: GameConfig = app.assets.let { a ->
@@ -64,10 +74,55 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
     private var connection: GameConnection? = null
     private var tokenRetries = 0
 
+    // --- The connection log: every step from sign-in to the world arriving ---
+    private val connectionLog = ConnectionLog()
+    /** The log's entries, for the menu; updated on the main thread. */
+    val logEntries = mutableStateListOf<ConnectionLog.Entry>()
+    var serverStatus by mutableStateOf<ServerStatus?>(null)
+        private set
+    private val slowWarning = Runnable {
+        log(Level.WARN, "No world after ${SLOW_CONNECT_MS / 1000}s. The server may be waking from sleep; a cold start loads the world from Firestore first.")
+    }
+    private val stuckWarning = Runnable {
+        log(Level.ERROR, "Still no world after ${STUCK_CONNECT_MS / 1000}s. Tap Retry. If it keeps happening, copy this log and check the server's health at ${BuildConfig.GAME_SERVER_URL}/api/health")
+    }
+
+    fun connectionLogText(): String = connectionLog.text()
+    fun stamp(entry: ConnectionLog.Entry) = connectionLog.stamp(entry)
+
+    /** Adds a line to the connection log and logcat. Safe from any thread. */
+    private fun log(level: Level, message: String) {
+        when (level) {
+            Level.INFO -> Log.i(LOG_TAG, message)
+            Level.WARN -> Log.w(LOG_TAG, message)
+            Level.ERROR -> Log.e(LOG_TAG, message)
+        }
+        val post = {
+            val entry = connectionLog.add(level, message, System.currentTimeMillis())
+            if (logEntries.lastOrNull() !== entry) {
+                logEntries.add(entry)
+                while (logEntries.size > 300) logEntries.removeAt(0)
+            }
+        }
+        if (Looper.myLooper() == Looper.getMainLooper()) post() else main.post(post)
+    }
+
+    private fun startWatchdog() {
+        main.removeCallbacks(slowWarning); main.removeCallbacks(stuckWarning)
+        main.postDelayed(slowWarning, SLOW_CONNECT_MS)
+        main.postDelayed(stuckWarning, STUCK_CONNECT_MS)
+    }
+
+    private fun stopWatchdog() {
+        main.removeCallbacks(slowWarning); main.removeCallbacks(stuckWarning)
+    }
+
     // In the background the app lets go of its connection, so an idle phone never keeps the server
     // awake; with nobody connected the server saves, rests, and scales to zero.
     private var released = false
     private val release = Runnable {
+        log(Level.INFO, "In the background for ${RELEASE_AFTER_BACKGROUND_MS / 1000}s: releasing the connection so the server can sleep")
+        stopWatchdog()
         connection?.disconnect()
         connection = null
         connected = false
@@ -108,6 +163,12 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
 
     private fun changeSession(next: Session?) {
         if (next?.uid == session?.uid) return
+        stopWatchdog()
+        when (next) {
+            is Session.Google -> log(Level.INFO, "Signed in with Google as ${next.displayName ?: "(no name)"} (uid ${next.uid.take(8)}…)")
+            is Session.Guest -> log(Level.INFO, "Playing as guest ${next.uid.take(8)}…")
+            null -> if (session != null) log(Level.INFO, "Signed out")
+        }
         main.removeCallbacks(release)
         released = false
         connection?.disconnect()
@@ -123,15 +184,42 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
     }
 
     private fun connect(s: Session, forceRefresh: Boolean) {
+        connectionLog.startAttempt(System.currentTimeMillis())
+        serverStatus = null
+        startWatchdog()
         viewModelScope.launch {
-            val token = if (s is Session.Google) runCatching { auth.idToken(forceRefresh) }.getOrNull() else null
-            if (s is Session.Google && token == null) {
-                authError = "Couldn't get a sign-in token. Check your connection and try again."
-                return@launch
+            var token: String? = null
+            if (s is Session.Google) {
+                log(Level.INFO, if (forceRefresh) "Requesting a fresh Firebase ID token…" else "Requesting a Firebase ID token…")
+                val started = System.currentTimeMillis()
+                val result = runCatching { auth.idToken(forceRefresh) }
+                token = result.getOrNull()
+                if (token == null) {
+                    val why = result.exceptionOrNull()?.let { ConnectionLog.describe(it) } ?: "no signed-in user"
+                    log(Level.ERROR, "Couldn't get an ID token: $why")
+                    authError = "Couldn't get a sign-in token. Check your connection and tap Retry."
+                    stopWatchdog()
+                    return@launch
+                }
+                log(Level.INFO, "ID token received in ${System.currentTimeMillis() - started}ms")
             }
+            authError = null
+            log(Level.INFO, "Game server: ${BuildConfig.GAME_SERVER_URL}")
             val c = connection ?: GameConnection(BuildConfig.GAME_SERVER_URL, this@GameViewModel).also { connection = it }
             c.connect(s.uid, token)
         }
+    }
+
+    /** Starts the connection over, from a fresh token. */
+    fun retryConnection() {
+        val s = session ?: return
+        log(Level.INFO, "Retrying from the start")
+        connection?.disconnect()
+        connection = null
+        connected = false
+        tokenRetries = 0
+        released = false
+        connect(s, forceRefresh = true)
     }
 
     fun signIn(activityContext: Context) {
@@ -169,10 +257,43 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
     override fun onEvent(event: String, json: String) {
         main.post {
             val s = store ?: return@post
+            if (event == "server_status") {
+                onServerStatus(json)
+                return@post
+            }
             val firstInit = event == "init" && !s.initialized
-            runCatching { s.apply(event, json) }
+            val started = System.nanoTime()
+            val result = runCatching { s.apply(event, json) }
+            result.exceptionOrNull()?.let { e ->
+                // Never silent: a message this app can't read is the most likely reason for a stall
+                log(Level.ERROR, "Couldn't read '$event' from the server (${json.length} bytes): ${ConnectionLog.describe(e)}")
+            }
+            if (event == "init" && result.isSuccess) {
+                stopWatchdog()
+                val ms = (System.nanoTime() - started) / 1_000_000
+                val me = s.me
+                log(
+                    if (me != null) Level.INFO else Level.ERROR,
+                    "World received (${json.length / 1024} KB, read in ${ms}ms): ${s.players.size} players, ${s.buildings.size} buildings, ${s.workers.size} workers" +
+                        if (me != null) ". Ready as ${me.name}." else ". It doesn't include this player (uid ${s.myId.take(8)}…).",
+                )
+            }
             if (firstInit) s.me?.let { cameraX = it.x; cameraY = it.y }
             revision++
+        }
+    }
+
+    private fun onServerStatus(json: String) {
+        val status = runCatching { GameJson.decodeFromString(ServerStatus.serializer(), json) }
+            .onFailure { log(Level.WARN, "Couldn't read the server's status report: ${ConnectionLog.describe(it)}") }
+            .getOrNull() ?: return
+        serverStatus = status
+        val woke = if (status.coldStart) "; it woke up for this connection (cold start)" else ""
+        log(Level.INFO, "Server ${status.revision} (${status.phase}), up ${status.uptimeMs / 1000}s$woke. ${status.playersOnline} online, ${status.players} players, ${status.buildings} buildings.")
+        if (status.coldStart) {
+            for (step in status.startup) {
+                log(Level.INFO, "  server +${step.atMs}ms ${step.step}${step.detail?.let { " - $it" } ?: ""}")
+            }
         }
     }
 
@@ -188,12 +309,17 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
             val s = session ?: return@post
             if (s is Session.Google && tokenRetries < 2) {
                 tokenRetries++
+                log(Level.WARN, "Trying again with a fresh token (attempt $tokenRetries of 2)")
                 connect(s, forceRefresh = true)
             } else {
+                stopWatchdog()
                 authError = "The server couldn't verify your sign-in. Sign out and sign in again."
+                log(Level.ERROR, "Gave up: the server refused the sign-in token")
             }
         }
     }
+
+    override fun onLog(level: Level, message: String) = log(level, message)
 
     /** The app left the screen. A short grace covers quick switches and Google's account picker. */
     fun onAppBackgrounded() {
@@ -206,12 +332,14 @@ class GameViewModel(app: Application) : AndroidViewModel(app), GameConnection.Li
         main.removeCallbacks(release)
         if (released) {
             released = false
+            log(Level.INFO, "Back on screen: reconnecting")
             session?.let { connect(it, forceRefresh = false) }
         }
     }
 
     override fun onCleared() {
         main.removeCallbacks(release)
+        stopWatchdog()
         connection?.disconnect()
         super.onCleared()
     }

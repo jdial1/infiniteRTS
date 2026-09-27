@@ -111,6 +111,7 @@ private fun DoctrineDialog(vm: GameViewModel) {
 // --- The Commissariat report: everything rivals took (or you took) while you were away ---
 @Composable
 private fun AwayReportDialog(vm: GameViewModel, store: GameStore) {
+    vm.observe()
     val entries = store.awayReport ?: return
     val time = remember { DateFormat.getTimeInstance(DateFormat.SHORT) }
     AlertDialog(
@@ -169,6 +170,7 @@ private fun DemolishDialog(vm: GameViewModel) {
 // --- Standings: held ground and fulfilled Plan phases, nothing else ---
 @Composable
 private fun StandingsDialog(vm: GameViewModel, store: GameStore) {
+    vm.observe()
     AlertDialog(
         onDismissRequest = { vm.showStandings = false },
         containerColor = Palette.Panel,

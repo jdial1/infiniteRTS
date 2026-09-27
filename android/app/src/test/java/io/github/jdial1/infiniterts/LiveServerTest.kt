@@ -26,8 +26,11 @@ class LiveServerTest {
         val gotInit = CountDownLatch(1)
         val gotBase = CountDownLatch(1)
         val gotTick = CountDownLatch(1)
+        val events = java.util.Collections.synchronizedList(mutableListOf<String>())
+        val logLines = java.util.Collections.synchronizedList(mutableListOf<String>())
         val connection = GameConnection(url!!, object : GameConnection.Listener {
             override fun onEvent(event: String, json: String) {
+                events += event
                 synchronized(lock) { store.apply(event, json) }
                 when (event) {
                     "init" -> gotInit.countDown()
@@ -37,11 +40,21 @@ class LiveServerTest {
             }
             override fun onConnectionChanged(connected: Boolean) {}
             override fun onUnauthorized() {}
+            override fun onLog(level: io.github.jdial1.infiniterts.game.ConnectionLog.Level, message: String) {
+                logLines += "$level $message"
+            }
         })
         connection.connect(userId, token = null)
         try {
             assertTrue("init", gotInit.await(10, TimeUnit.SECONDS))
             assertTrue("state_tick", gotTick.await(5, TimeUnit.SECONDS))
+            // The server reports its status before the world, and the connection log saw each step
+            assertTrue("server_status before init", events.indexOf("server_status") in 0 until events.indexOf("init"))
+            val lines = logLines.toList()
+            assertTrue("log: $lines", lines.any { it.contains("Connecting to $url") })
+            assertTrue("log: $lines", lines.any { it.contains("Server reached") })
+            assertTrue("log: $lines", lines.any { it.contains("Connected (socket") })
+            println("Connection log:\n" + lines.joinToString("\n"))
             val me = synchronized(lock) { store.me!! }
             connection.build("base", me.x, me.y)
             assertTrue("base built", gotBase.await(5, TimeUnit.SECONDS))

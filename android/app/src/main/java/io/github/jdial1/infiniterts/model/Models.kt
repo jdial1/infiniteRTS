@@ -196,3 +196,23 @@ data class LedgerHistory(val entries: List<LedgerEntry> = emptyList(), val lastS
 
 @Serializable
 data class XY(val x: Double, val y: Double)
+
+/** The server's own startup record and health, sent first on every connection (server/status.ts). */
+@Serializable
+data class StartupStep(val step: String, val atMs: Long = 0, val detail: String? = null)
+
+@Serializable
+data class ServerStatus(
+    val phase: String = "",
+    val revision: String = "",
+    val bootedAt: String = "",
+    val uptimeMs: Long = 0,
+    val coldStart: Boolean = false,
+    val auth: String? = null,
+    val worldStore: String? = null,
+    val worldLoadMs: Long? = null,
+    val playersOnline: Int = 0,
+    val players: Int = 0,
+    val buildings: Int = 0,
+    val startup: List<StartupStep> = emptyList(),
+)

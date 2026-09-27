@@ -1,7 +1,11 @@
 package io.github.jdial1.infiniterts.net
 
+import io.github.jdial1.infiniterts.game.ConnectionLog
+import io.github.jdial1.infiniterts.game.ConnectionLog.Level
 import io.socket.client.IO
+import io.socket.client.Manager
 import io.socket.client.Socket
+import io.socket.engineio.client.Transport
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -19,6 +23,8 @@ class GameConnection(
         fun onConnectionChanged(connected: Boolean)
         /** The server refused this connection's credentials (an expired or invalid token). */
         fun onUnauthorized()
+        /** A step of the connection, for the connection log. */
+        fun onLog(level: Level, message: String) {}
     }
 
     private var socket: Socket? = null
@@ -34,20 +40,49 @@ class GameConnection(
             .setAuth(auth)
             .setReconnection(true)
             .build()
+        listener.onLog(Level.INFO, "Connecting to $url (${if (token != null) "with a Firebase ID token" else "as a guest"})")
         val s = IO.socket(url, options)
-        s.on(Socket.EVENT_CONNECT) { listener.onConnectionChanged(true) }
-        s.on(Socket.EVENT_DISCONNECT) { listener.onConnectionChanged(false) }
+        val manager = s.io()
+        // The transport underneath: reaching the server at all, and how
+        manager.on(Manager.EVENT_TRANSPORT) { args ->
+            (args.firstOrNull() as? Transport)?.let { listener.onLog(Level.INFO, "Transport: ${it.name}") }
+        }
+        manager.on(Manager.EVENT_OPEN) { listener.onLog(Level.INFO, "Server reached (engine handshake complete)") }
+        manager.on(Manager.EVENT_ERROR) { args ->
+            listener.onLog(Level.WARN, "Transport error: ${describe(args.firstOrNull())}")
+        }
+        manager.on(Manager.EVENT_CLOSE) { args ->
+            listener.onLog(Level.WARN, "Transport closed: ${args.firstOrNull() ?: "no reason given"}")
+        }
+        manager.on(Manager.EVENT_RECONNECT_ATTEMPT) { args ->
+            listener.onLog(Level.INFO, "Retrying (attempt ${args.firstOrNull() ?: "?"})")
+        }
+        manager.on(Manager.EVENT_RECONNECT_FAILED) { listener.onLog(Level.ERROR, "Gave up reconnecting") }
+
+        s.on(Socket.EVENT_CONNECT) {
+            listener.onLog(Level.INFO, "Connected (socket ${s.id()}); waiting for the world")
+            listener.onConnectionChanged(true)
+        }
+        s.on(Socket.EVENT_DISCONNECT) { args ->
+            listener.onLog(Level.WARN, "Disconnected: ${args.firstOrNull() ?: "no reason given"}")
+            listener.onConnectionChanged(false)
+        }
         s.on(Socket.EVENT_CONNECT_ERROR) { args ->
             listener.onConnectionChanged(false)
-            val message = when (val a = args.firstOrNull()) {
+            val a = args.firstOrNull()
+            val message = when (a) {
                 is JSONObject -> a.optString("message")
                 is Throwable -> a.message
                 else -> a?.toString()
             }
             if (message == "unauthorized") {
+                val reason = (a as? JSONObject)?.optJSONObject("data")?.optString("reason")?.takeIf { it.isNotBlank() }
+                listener.onLog(Level.ERROR, "Server refused the connection: ${reason ?: "unauthorized"}")
                 // Reconnecting with the same stale token would fail forever; let the caller fetch a new one
                 s.io().reconnection(false)
                 listener.onUnauthorized()
+            } else {
+                listener.onLog(Level.WARN, "Couldn't connect: ${describe(a)}")
             }
         }
         for (event in SERVER_EVENTS) {
@@ -88,9 +123,16 @@ class GameConnection(
         socket?.emit(event, arg)
     }
 
+    private fun describe(value: Any?): String = when (value) {
+        is Throwable -> ConnectionLog.describe(value)
+        is JSONObject -> value.optString("message", value.toString())
+        null -> "no details"
+        else -> value.toString()
+    }
+
     companion object {
         val SERVER_EVENTS = listOf(
-            "init", "chunk_data", "player_joined", "player_updated", "player_left", "position_corrected",
+            "server_status", "init", "chunk_data", "player_joined", "player_updated", "player_left", "position_corrected",
             "vision", "state_tick", "building_created", "building_updated", "building_destroyed",
             "unit_created", "unit_updated", "resource_updated", "resource_depleted", "inventory_updated",
             "scoreboard", "rates", "combat_events", "healing_events", "ledger_history", "ledger_entry",

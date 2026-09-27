@@ -24,4 +24,6 @@ Without a Firebase project configured, the server accepts guests (no sign-in) an
 
 Players sign in with Google (Firebase Authentication). The game server runs on Cloud Run as a single always-on instance, and the world is saved in Cloud Firestore. See [docs/DEPLOY.md](docs/DEPLOY.md) for the setup and deploy commands, and `.env.example` for every server variable.
 
+How the server starts and how the app connects, and how to read their logs when something gets stuck, is in [docs/STARTUP.md](docs/STARTUP.md).
+
 The game's design soul, and why its systems work the way they do, is in [docs/SOUL.md](docs/SOUL.md).

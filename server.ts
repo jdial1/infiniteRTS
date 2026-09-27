@@ -8,7 +8,8 @@ import { constants, buildings, upgrades } from './data';
 import { isPointInTerritory } from './src/utils/geometry';
 import { planRequirement, planInstalment, scoreFor, heroMaxSpeed, visionCircles, canSee, VisionCircle, demolishRefund, maxHealthOf, desiredLabour, RESOURCE_TYPES } from './src/rules';
 import { createWorldStore, WorldSnapshot } from './server/persistence';
-import { createIdentifier } from './server/auth';
+import { createIdentifier, AuthRejected } from './server/auth';
+import { startupStep, setPhase, setFact, serverStatus } from './server/status';
 
 // Initialize game state
 const gameState: GameState = {
@@ -111,6 +112,7 @@ function isPointInValidMiningArea(x: number, y: number, ownerId: string, gameSta
 }
 
 async function startServer() {
+  startupStep('process started', `node ${process.version}, NODE_ENV=${process.env.NODE_ENV || 'development'}, revision ${process.env.K_REVISION || 'local'}`);
   const app = express();
   const PORT = parseInt(process.env.PORT || '3000', 10);
   const httpServer = createServer(app);
@@ -450,17 +452,39 @@ function generateChunk(cx: number, cy: number) {
   }
 
   // API Route
+  const liveCounts = () => ({
+    playersOnline: userToSocket.size,
+    players: Object.keys(gameState.players).length,
+    buildings: Object.keys(gameState.buildings).length,
+  });
+
+  // Health and startup report: the phase, how long each startup step took, and the world's size
   app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', ...serverStatus(liveCounts()) });
   });
 
   // Every connection proves who it is before it reaches the game: a verified Firebase ID token
   // (Google sign-in), or a guest id when running locally without a Firebase project
-  const identify = createIdentifier();
+  const identifier = createIdentifier();
+  setFact('auth', identifier.mode);
+  startupStep('auth configured', identifier.mode);
   io.use((socket, next) => {
-    identify(socket.handshake.auth)
-      .then(uid => { socket.data.userId = uid; next(); })
-      .catch(() => next(new Error('unauthorized')));
+    const started = Date.now();
+    const transport = socket.conn.transport.name;
+    identifier.identify(socket.handshake.auth)
+      .then(uid => {
+        socket.data.userId = uid;
+        socket.data.authMs = Date.now() - started;
+        next();
+      })
+      .catch((e) => {
+        const reason = e instanceof AuthRejected ? e.reason : `identification failed (${e?.message || e})`;
+        console.warn(`[connect] refused ${socket.id} over ${transport} after ${Date.now() - started}ms: ${reason}`);
+        // The app shows this reason in its connection log
+        const err: any = new Error('unauthorized');
+        err.data = { reason };
+        next(err);
+      });
   });
 
   io.on('connection', (socket) => {
@@ -512,8 +536,11 @@ function generateChunk(cx: number, cy: number) {
     if (player.laborRatio === undefined) player.laborRatio = { wood: 1, stone: 1, gold: 1 };
     moveBudgets.set(userId, { budget: 0, at: Date.now() });
 
-    // Send initial state to the player: its own state, the public map, and only what it can see
-    socket.emit('init', initialStateFor(userId));
+    // Tell the app how the server is doing (and whether this connection just woke it), then the world
+    socket.emit('server_status', serverStatus(liveCounts()));
+    const init = initialStateFor(userId);
+    socket.emit('init', init);
+    console.log(`[connect] ${userId} joined over ${socket.conn.transport.name}: token verified in ${socket.data.authMs}ms, sent ${Object.keys(init.players).length} players, ${Object.keys(init.buildings).length} buildings, ${Object.keys(init.units).length} workers`);
     socket.emit('scoreboard', scoreboard());
     socket.emit('ledger_history', { entries: ledgers.get(userId) || [], lastSeen: lastSeenAt.get(userId) ?? null });
 
@@ -1250,11 +1277,17 @@ function generateChunk(cx: number, cy: number) {
     lastSeenAt: [...lastSeenAt],
   });
   const worldStore = createWorldStore();
+  setFact('worldStore', worldStore.describe);
+  setPhase('loading_world');
+  startupStep('loading world', worldStore.describe);
+  const loadStarted = Date.now();
   const saved = await worldStore.load().catch(e => {
     // Refuse to start over a world we couldn't read, rather than overwrite it with an empty one
-    console.error(`Could not load the world from ${worldStore.describe}:`, e);
+    console.error(`[startup] could not load the world from ${worldStore.describe}:`, e);
     process.exit(1);
   });
+  setFact('worldLoadMs', Date.now() - loadStarted);
+  if (!saved) startupStep('no saved world found', 'starting a fresh one');
   if (saved) {
     Object.assign(gameState, saved.gameState);
     saved.generatedChunks.forEach(k => generatedChunks.add(k));
@@ -1270,7 +1303,7 @@ function generateChunk(cx: number, cy: number) {
     // Everyone was away while the server was down
     const now = Date.now();
     Object.keys(gameState.players).forEach(id => { if (!lastSeenAt.has(id)) lastSeenAt.set(id, now); });
-    console.log(`Loaded world from ${worldStore.describe}: ${Object.keys(gameState.players).length} players, ${Object.keys(gameState.buildings).length} buildings`);
+    startupStep('world loaded', `${Date.now() - loadStarted}ms: ${Object.keys(gameState.players).length} players, ${Object.keys(gameState.buildings).length} buildings, ${Object.keys(gameState.resources).length} resource nodes`);
   }
   let saving: Promise<void> | null = null;
   const saveNow = () => {
@@ -1285,6 +1318,8 @@ function generateChunk(cx: number, cy: number) {
   // seconds before stopping the container
   for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     process.once(signal, async () => {
+      setPhase('stopping');
+      console.log(`[shutdown] ${signal}: ${userToSocket.size} players connected; saving the world`);
       const now = Date.now();
       for (const id of userToSocket.keys()) lastSeenAt.set(id, now);
       if (saving) await saving;
@@ -1294,7 +1329,8 @@ function generateChunk(cx: number, cy: number) {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    startupStep('listening', `port ${PORT}`);
+    setPhase('ready');
   });
 }
 
